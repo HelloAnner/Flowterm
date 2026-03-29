@@ -1,0 +1,32 @@
+[package]
+name = "flowterm"
+version = "0.1.0"
+description = "Terminal-first vibe coding console"
+authors = ["Anner"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "flowterm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.6", features = [] }
+
+[dependencies]
+anyhow = "1.0"
+notify = "6.1"
+portable-pty = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+tauri-plugin-dialog = "2"
+thiserror = "2.0"
+tauri = { version = "2.10.3", features = [] }
+tauri-plugin-log = "2"
+uuid = { version = "1.18", features = ["serde", "v4"] }
+walkdir = "2.5"
