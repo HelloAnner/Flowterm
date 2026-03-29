@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use walkdir::WalkDir;
 
 use crate::models::{
@@ -43,6 +43,7 @@ pub fn build_file_preview_with_options(
     let git_status = *statuses.get(relative_path).unwrap_or(&' ');
     let live_status = resolve_live_status(live_files, relative_path, git_status);
     let absolute_path = project_path.join(relative_path);
+    let prefers_latest_markdown = is_markdown_path(relative_path) && git_status != 'D';
 
     if let Some(mime_type) = resolve_image_mime(relative_path) {
         if absolute_path.exists() {
@@ -54,6 +55,17 @@ pub fn build_file_preview_with_options(
                 mime_type,
             );
         }
+    }
+
+    if prefers_latest_markdown {
+        return build_text_preview(
+            project_path,
+            relative_path,
+            git_status,
+            live_status,
+            None,
+            None,
+        );
     }
 
     match git_status {
@@ -104,6 +116,10 @@ fn collect_files(
         let git_status = *statuses.get(&relative).unwrap_or(&' ');
         let live_status = resolve_live_status(live_files, &relative, git_status);
 
+        if !should_include_snapshot_file(&relative, git_status, &live_status) {
+            continue;
+        }
+
         files.push(ProjectFileEntry {
             path: relative,
             kind: "file".to_string(),
@@ -113,7 +129,14 @@ fn collect_files(
     }
 
     for (path, status) in statuses {
-        if *status == 'D' && !actual_paths.contains(path) {
+        if *status == 'D'
+            && !actual_paths.contains(path)
+            && should_include_snapshot_file(
+                path,
+                *status,
+                &resolve_live_status(live_files, path, 'D'),
+            )
+        {
             files.push(ProjectFileEntry {
                 path: path.clone(),
                 kind: "file".to_string(),
@@ -193,28 +216,14 @@ fn build_git_preview(
         .with_context(|| format!("failed to run git diff for {relative_path}"))?;
 
     if !output.status.success() || output.stdout.is_empty() {
-        return build_text_preview(
-            project_path,
-            relative_path,
-            status,
-            live_status,
-            None,
-            None,
-        );
+        return build_text_preview(project_path, relative_path, status, live_status, None, None);
     }
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
     let lines = parse_unified_diff(&diff_text);
 
     if lines.is_empty() {
-        return build_text_preview(
-            project_path,
-            relative_path,
-            status,
-            live_status,
-            None,
-            None,
-        );
+        return build_text_preview(project_path, relative_path, status, live_status, None, None);
     }
 
     Ok(FilePreview {
@@ -266,7 +275,8 @@ fn build_text_preview(
     let all_lines = content.lines().collect::<Vec<_>>();
     let total_lines = all_lines.len();
     let requested_start_line = start_line.unwrap_or(0).min(total_lines);
-    let requested_line_count = line_count.unwrap_or(total_lines.saturating_sub(requested_start_line));
+    let requested_line_count =
+        line_count.unwrap_or(total_lines.saturating_sub(requested_start_line));
     let requested_end_line = requested_start_line
         .saturating_add(requested_line_count)
         .min(total_lines);
@@ -446,7 +456,11 @@ fn relative_path(root: &Path, path: &Path) -> Result<String> {
     Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
-fn resolve_live_status(live_files: &HashSet<String>, relative_path: &str, git_status: char) -> LiveStatus {
+fn resolve_live_status(
+    live_files: &HashSet<String>,
+    relative_path: &str,
+    git_status: char,
+) -> LiveStatus {
     if !live_files.contains(relative_path) {
         return LiveStatus::Idle;
     }
@@ -486,28 +500,43 @@ fn resolve_image_mime(relative_path: &str) -> Option<&'static str> {
     }
 }
 
+fn is_markdown_path(relative_path: &str) -> bool {
+    relative_path.to_ascii_lowercase().ends_with(".md")
+}
+
+fn should_include_snapshot_file(
+    relative_path: &str,
+    git_status: char,
+    live_status: &LiveStatus,
+) -> bool {
+    if resolve_image_mime(relative_path).is_none() {
+        return true;
+    }
+
+    git_status != ' ' || *live_status != LiveStatus::Idle
+}
+
 fn should_visit(path: &Path) -> bool {
-    let ignored = [
-        ".git",
-        "node_modules",
-        "dist",
-        "target",
-        ".next",
-        ".turbo",
-    ];
-    let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    let ignored = [".git", "node_modules", "dist", "target", ".next", ".turbo"];
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
 
     !ignored.contains(&name)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::{
-        build_file_preview_with_options,
-        parse_porcelain_line,
-        parse_unified_diff,
+        build_file_preview_with_options, collect_files, parse_porcelain_line, parse_unified_diff,
     };
     use crate::models::DiffLineKind;
 
@@ -519,6 +548,22 @@ mod tests {
         let root = std::env::temp_dir().join(format!("flowterm-preview-{unique}"));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn init_git_repo(root: &std::path::Path) {
+        let run = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .status()
+                .unwrap();
+
+            assert!(status.success(), "git {:?} failed", args);
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "Flowterm Test"]);
+        run(&["config", "user.email", "flowterm@example.com"]);
     }
 
     #[test]
@@ -559,6 +604,25 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
+    fn omits_clean_image_files_from_project_snapshot() {
+        let root = create_temp_project_root();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("assets/hero.png"), [137, 80, 78, 71]).unwrap();
+        fs::write(root.join("assets/changed.png"), [137, 80, 78, 71]).unwrap();
+        fs::write(root.join("src/App.tsx"), "export default function App() {}").unwrap();
+
+        let statuses = HashMap::from([("assets/changed.png".to_string(), 'M')]);
+        let files = collect_files(&root, &statuses, &HashSet::new()).unwrap();
+        let paths = files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["assets/changed.png", "src/App.tsx"]);
+    }
+
+    #[test]
     fn builds_clean_text_preview_with_full_file_content() {
         let root = create_temp_project_root();
         let file_path = root.join("README.md");
@@ -586,12 +650,11 @@ diff --git a/src/lib.rs b/src/lib.rs
         fs::write(
             &file_path,
             [
-                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-                0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-                0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
-                0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB1, 0x00, 0x00, 0x00,
-                0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+                0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78,
+                0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D,
+                0xB1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
             ],
         )
         .unwrap();
@@ -600,7 +663,10 @@ diff --git a/src/lib.rs b/src/lib.rs
             build_file_preview_with_options(&root, "pixel.png", &HashSet::new(), None, None)
                 .unwrap();
 
-        assert!(matches!(preview.mode, crate::models::FilePreviewMode::Image));
+        assert!(matches!(
+            preview.mode,
+            crate::models::FilePreviewMode::Image
+        ));
         assert!(preview
             .image_data_url
             .as_deref()
@@ -620,19 +686,46 @@ diff --git a/src/lib.rs b/src/lib.rs
             .join("\n");
         fs::write(&file_path, content).unwrap();
 
-        let preview = build_file_preview_with_options(
-            &root,
-            "story.txt",
-            &HashSet::new(),
-            Some(10),
-            Some(5),
-        )
-        .unwrap();
+        let preview =
+            build_file_preview_with_options(&root, "story.txt", &HashSet::new(), Some(10), Some(5))
+                .unwrap();
 
         assert_eq!(preview.start_line, 10);
         assert_eq!(preview.total_lines, 40);
         assert_eq!(preview.lines.len(), 5);
         assert_eq!(preview.lines[0].content, "line 11");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn renders_modified_markdown_as_latest_text_content() {
+        let root = create_temp_project_root();
+        init_git_repo(&root);
+
+        let file_path = root.join("README.md");
+        fs::write(&file_path, "# Before\n\nOld note\n").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-qm", "init"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+
+        fs::write(&file_path, "# After\n\nLatest note\n").unwrap();
+
+        let preview =
+            build_file_preview_with_options(&root, "README.md", &HashSet::new(), None, None)
+                .unwrap();
+
+        assert!(matches!(preview.mode, crate::models::FilePreviewMode::Text));
+        assert_eq!(preview.lines.len(), 3);
+        assert_eq!(preview.lines[0].content, "# After");
+        assert_eq!(preview.lines[2].content, "Latest note");
 
         let _ = fs::remove_dir_all(root);
     }

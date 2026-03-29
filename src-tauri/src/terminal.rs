@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -12,15 +12,21 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
-use crate::models::{TerminalAttachment, TerminalOutputEvent, TerminalState, TerminalStateEvent};
+use crate::{
+    models::{TerminalAttachment, TerminalOutputEvent, TerminalState, TerminalStateEvent},
+    state::ProjectRegistry,
+};
 
+const CWD_MARKER_PREFIX: &str = "\u{1b}]133;CurrentDir=";
 const MAX_HISTORY_CHARS: usize = 40_000;
 const TERMINAL_OUTPUT_EVENT: &str = "flowterm://terminal-output";
 const TERMINAL_STATE_EVENT: &str = "flowterm://terminal-state";
 
 pub struct TerminalSession {
     child: Box<dyn portable_pty::Child + Send>,
+    current_cwd: Arc<Mutex<String>>,
     history: Arc<Mutex<String>>,
+    hook_path: Option<PathBuf>,
     master: Box<dyn MasterPty + Send>,
     pane_id: String,
     project_id: String,
@@ -40,9 +46,11 @@ impl TerminalManager {
     pub fn attach_or_create(
         &mut self,
         app: AppHandle,
+        registry: Arc<Mutex<ProjectRegistry>>,
         project_id: &str,
         project_path: &Path,
         pane_id: Option<&str>,
+        cwd: Option<&str>,
     ) -> Result<TerminalAttachment> {
         let pane_id = pane_id.unwrap_or("main");
         let session_id = self
@@ -55,13 +63,23 @@ impl TerminalManager {
             Some(session_id) => session_id,
             None => {
                 let session_id = Uuid::new_v4().to_string();
+                let initial_cwd = resolve_session_cwd(project_path, cwd);
                 let session = create_session(
                     app,
+                    registry.clone(),
                     project_id.to_string(),
                     pane_id.to_string(),
                     session_id.clone(),
-                    project_path.to_path_buf(),
+                    initial_cwd.clone(),
                 )?;
+
+                if let Ok(mut project_registry) = registry.lock() {
+                    let _ = project_registry.update_terminal_pane(
+                        project_id,
+                        pane_id,
+                        Some(initial_cwd.to_string_lossy().to_string()),
+                    );
+                }
 
                 self.sessions.insert(session_id.clone(), session);
                 self.session_ids_by_pane
@@ -78,6 +96,7 @@ impl TerminalManager {
             .context("terminal session not found after creation")?;
 
         Ok(TerminalAttachment {
+            cwd: Some(session.current_cwd.lock().unwrap().clone()),
             history: session.history.lock().unwrap().clone(),
             pane_id: session.pane_id.clone(),
             project_id: session.project_id.clone(),
@@ -87,7 +106,12 @@ impl TerminalManager {
         })
     }
 
-    pub fn close(&mut self, session_id: &str) {
+    pub fn close(
+        &mut self,
+        registry: Arc<Mutex<ProjectRegistry>>,
+        project_id: &str,
+        session_id: &str,
+    ) {
         let Some(session) = self.sessions.remove(session_id) else {
             return;
         };
@@ -101,6 +125,10 @@ impl TerminalManager {
 
         if should_remove_project {
             self.session_ids_by_pane.remove(&session.project_id);
+        }
+
+        if let Ok(mut project_registry) = registry.lock() {
+            let _ = project_registry.remove_terminal_pane(project_id, &session.pane_id);
         }
     }
 
@@ -167,10 +195,11 @@ impl TerminalManager {
 
 fn create_session(
     app: AppHandle,
+    registry: Arc<Mutex<ProjectRegistry>>,
     project_id: String,
     pane_id: String,
     session_id: String,
-    project_path: PathBuf,
+    session_cwd: PathBuf,
 ) -> Result<TerminalSession> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -185,13 +214,14 @@ fn create_session(
         .and_then(|value| value.to_str())
         .unwrap_or("shell")
         .to_string();
-    let mut command = CommandBuilder::new(shell);
-    command.cwd(project_path);
+    let (command, hook_path) = build_shell_command(&shell, &shell_label, &session_cwd, &session_id)?;
     let child = pair.slave.spawn_command(command)?;
     let writer = pair.master.take_writer()?;
     let mut reader = pair.master.try_clone_reader()?;
     let history = Arc::new(Mutex::new(String::new()));
+    let current_cwd = Arc::new(Mutex::new(session_cwd.to_string_lossy().to_string()));
     let state = Arc::new(Mutex::new(TerminalState::Idle));
+    let current_cwd_ref = Arc::clone(&current_cwd);
     let history_ref = Arc::clone(&history);
     let state_ref = Arc::clone(&state);
     let pane_id_ref = pane_id.clone();
@@ -234,7 +264,26 @@ fn create_session(
                 break;
             }
 
-            let chunk = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let raw_chunk = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let (chunk, next_cwd) = strip_cwd_markers(&raw_chunk);
+
+            if let Some(cwd) = next_cwd {
+                if let Ok(mut current_cwd) = current_cwd_ref.lock() {
+                    *current_cwd = cwd.clone();
+                }
+                if let Ok(mut project_registry) = registry.lock() {
+                    let _ = project_registry.update_terminal_pane(
+                        &project_id_ref,
+                        &pane_id_ref,
+                        Some(cwd),
+                    );
+                }
+            }
+
+            if chunk.is_empty() {
+                continue;
+            }
+
             push_history(&history_ref, &chunk);
             let next_state = detect_state(&chunk);
             let should_emit_state = if let Ok(mut current_state) = state_ref.lock() {
@@ -273,7 +322,9 @@ fn create_session(
 
     Ok(TerminalSession {
         child,
+        current_cwd,
         history,
+        hook_path,
         master: pair.master,
         pane_id,
         project_id,
@@ -287,7 +338,93 @@ fn create_session(
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = self.child.kill();
+
+        if let Some(hook_path) = &self.hook_path {
+            if hook_path.is_dir() {
+                let _ = fs::remove_dir_all(hook_path);
+            } else {
+                let _ = fs::remove_file(hook_path);
+            }
+        }
     }
+}
+
+fn build_shell_command(
+    shell: &str,
+    shell_label: &str,
+    session_cwd: &Path,
+    session_id: &str,
+) -> Result<(CommandBuilder, Option<PathBuf>)> {
+    match shell_label {
+        "zsh" => build_zsh_command(shell, session_cwd, session_id),
+        "bash" => build_bash_command(shell, session_cwd, session_id),
+        _ => {
+            let mut command = CommandBuilder::new(shell);
+            command.cwd(session_cwd);
+            Ok((command, None))
+        }
+    }
+}
+
+fn build_zsh_command(
+    shell: &str,
+    session_cwd: &Path,
+    session_id: &str,
+) -> Result<(CommandBuilder, Option<PathBuf>)> {
+    let hook_dir = env::temp_dir().join("flowterm-shell-hooks").join(session_id);
+    fs::create_dir_all(&hook_dir)?;
+    let original_zdotdir = env::var("ZDOTDIR")
+        .ok()
+        .or_else(|| env::var("HOME").ok())
+        .unwrap_or_default();
+    let hook_file = hook_dir.join(".zshrc");
+
+    fs::write(
+        &hook_file,
+        format!(
+            "if [ -n \"$FLOWTERM_ORIGINAL_ZDOTDIR\" ] && [ -r \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\" ]; then\n  source \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\"\nelif [ -r \"$HOME/.zshrc\" ]; then\n  source \"$HOME/.zshrc\"\nfi\nfunction __flowterm_emit_cwd() {{\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}}\nautoload -Uz add-zsh-hook 2>/dev/null\nadd-zsh-hook precmd __flowterm_emit_cwd\n__flowterm_emit_cwd\n"
+        ),
+    )?;
+
+    let mut command = CommandBuilder::new(shell);
+    command.arg("-i");
+    command.cwd(session_cwd);
+    command.env("FLOWTERM_ORIGINAL_ZDOTDIR", original_zdotdir);
+    command.env("ZDOTDIR", &hook_dir);
+
+    Ok((command, Some(hook_dir)))
+}
+
+fn build_bash_command(
+    shell: &str,
+    session_cwd: &Path,
+    session_id: &str,
+) -> Result<(CommandBuilder, Option<PathBuf>)> {
+    let hook_dir = env::temp_dir().join("flowterm-shell-hooks").join(session_id);
+    fs::create_dir_all(&hook_dir)?;
+    let hook_file = hook_dir.join("flowterm.bashrc");
+    let original_bashrc = env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".bashrc"))
+        .filter(|path| path.exists())
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    fs::write(
+        &hook_file,
+        format!(
+            "if [ -n \"$FLOWTERM_ORIGINAL_BASHRC\" ] && [ -r \"$FLOWTERM_ORIGINAL_BASHRC\" ]; then\n  source \"$FLOWTERM_ORIGINAL_BASHRC\"\nelif [ -r \"$HOME/.bashrc\" ]; then\n  source \"$HOME/.bashrc\"\nfi\n__flowterm_emit_cwd() {{\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}}\nPROMPT_COMMAND=\"__flowterm_emit_cwd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"\n__flowterm_emit_cwd\n"
+        ),
+    )?;
+
+    let mut command = CommandBuilder::new(shell);
+    command.arg("--rcfile");
+    command.arg(hook_file.as_os_str());
+    command.arg("-i");
+    command.cwd(session_cwd);
+    command.env("FLOWTERM_ORIGINAL_BASHRC", original_bashrc);
+
+    Ok((command, Some(hook_dir)))
 }
 
 fn detect_state(chunk: &str) -> TerminalState {
@@ -296,6 +433,18 @@ fn detect_state(chunk: &str) -> TerminalState {
     }
 
     TerminalState::Running
+}
+
+fn find_marker_terminator(input: &str) -> Option<(usize, usize)> {
+    let bel = input.find('\u{7}').map(|index| (index, index + 1));
+    let st = input.find("\u{1b}\\").map(|index| (index, index + 2));
+
+    match (bel, st) {
+        (Some(left), Some(right)) => Some(if left.0 < right.0 { left } else { right }),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
 }
 
 fn push_history(history: &Arc<Mutex<String>>, chunk: &str) {
@@ -307,4 +456,41 @@ fn push_history(history: &Arc<Mutex<String>>, chunk: &str) {
             *content = content[start..].to_string();
         }
     }
+}
+
+fn resolve_session_cwd(project_path: &Path, cwd: Option<&str>) -> PathBuf {
+    let Some(raw_cwd) = cwd.map(PathBuf::from) else {
+        return project_path.to_path_buf();
+    };
+
+    if raw_cwd.is_dir() {
+        return raw_cwd;
+    }
+
+    project_path.to_path_buf()
+}
+
+fn strip_cwd_markers(chunk: &str) -> (String, Option<String>) {
+    let mut cleaned = String::new();
+    let mut remaining = chunk;
+    let mut latest_cwd = None;
+
+    loop {
+        let Some(start) = remaining.find(CWD_MARKER_PREFIX) else {
+            cleaned.push_str(remaining);
+            break;
+        };
+        let marker_start = start + CWD_MARKER_PREFIX.len();
+        cleaned.push_str(&remaining[..start]);
+        let after_prefix = &remaining[marker_start..];
+        let Some((terminator_start, terminator_end)) = find_marker_terminator(after_prefix) else {
+            cleaned.push_str(&remaining[start..]);
+            break;
+        };
+
+        latest_cwd = Some(after_prefix[..terminator_start].to_string());
+        remaining = &after_prefix[terminator_end..];
+    }
+
+    (cleaned, latest_cwd)
 }

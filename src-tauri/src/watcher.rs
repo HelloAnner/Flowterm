@@ -7,10 +7,7 @@ use anyhow::Result;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
 
-use crate::{
-    models::ProjectRefreshEvent,
-    state::ProjectRegistry,
-};
+use crate::{models::ProjectRefreshEvent, state::ProjectRegistry};
 
 const PROJECT_REFRESH_EVENT: &str = "flowterm://project-refresh";
 
@@ -42,7 +39,8 @@ impl ProjectWatcher {
             move |result: notify::Result<notify::Event>| {
                 if let Ok(event) = result {
                     for changed_path in event.paths {
-                        if let Some(relative_path) = to_relative_path(&project_root, &changed_path) {
+                        if let Some(relative_path) = to_relative_path(&project_root, &changed_path)
+                        {
                             if let Ok(mut registry) = watcher_registry.lock() {
                                 registry.mark_live_file(&project_id_owned, relative_path);
                             }

@@ -8,7 +8,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use git::scan_project;
-use models::{AppBootstrap, FilePreview, ProjectSnapshot, ProjectSummary};
+use models::{
+    AppBootstrap, FilePreview, PerformanceProbeReport, PerformanceProbeState,
+    PersistedTerminalPane, ProjectSnapshot, ProjectSummary, ProjectWorkspaceState,
+    TerminalAttachment,
+};
 use state::FlowtermState;
 use tauri::{AppHandle, Manager, State};
 
@@ -137,15 +141,94 @@ fn attach_terminal(
     pane_id: Option<String>,
 ) -> Result<models::TerminalAttachment, String> {
     with_error_handling(|| {
-        let project = {
+        let (project, panes) = {
             let registry = state.registry.lock().unwrap();
-            registry
-                .find_project(&project_id)
-                .context("project not found")?
+            (
+                registry
+                    .find_project(&project_id)
+                    .context("project not found")?,
+                registry.saved_terminal_panes(&project_id)?,
+            )
         };
+        let pane_cwd = pane_id
+            .as_deref()
+            .and_then(|candidate| panes.iter().find(|pane| pane.pane_id == candidate))
+            .and_then(|pane| pane.cwd.as_deref());
 
         let mut terminals = state.terminals.lock().unwrap();
-        terminals.attach_or_create(app, &project.id, &PathBuf::from(project.path), pane_id.as_deref())
+        terminals.attach_or_create(
+            app,
+            state.registry.clone(),
+            &project.id,
+            &PathBuf::from(project.path),
+            pane_id.as_deref(),
+            pane_cwd,
+        )
+    })
+}
+
+#[tauri::command]
+fn list_terminals(
+    app: AppHandle,
+    state: State<FlowtermState>,
+    project_id: String,
+) -> Result<Vec<TerminalAttachment>, String> {
+    with_error_handling(|| {
+        let (project, persisted_panes) = {
+            let registry = state.registry.lock().unwrap();
+            (
+                registry
+                    .find_project(&project_id)
+                    .context("project not found")?,
+                registry.saved_terminal_panes(&project_id)?,
+            )
+        };
+        let panes = if persisted_panes.is_empty() {
+            vec![PersistedTerminalPane {
+                cwd: Some(project.path.clone()),
+                pane_id: "main".to_string(),
+            }]
+        } else {
+            persisted_panes
+        };
+        let mut terminals = state.terminals.lock().unwrap();
+        let mut attachments = Vec::with_capacity(panes.len());
+
+        for pane in panes {
+            attachments.push(terminals.attach_or_create(
+                app.clone(),
+                state.registry.clone(),
+                &project.id,
+                &PathBuf::from(&project.path),
+                Some(&pane.pane_id),
+                pane.cwd.as_deref(),
+            )?);
+        }
+
+        Ok(attachments)
+    })
+}
+
+#[tauri::command]
+fn read_project_workspace(
+    state: State<FlowtermState>,
+    project_id: String,
+) -> Result<ProjectWorkspaceState, String> {
+    with_error_handling(|| {
+        let registry = state.registry.lock().unwrap();
+        registry.workspace_state_for(&project_id)
+    })
+}
+
+#[tauri::command]
+fn save_project_workspace(
+    state: State<FlowtermState>,
+    project_id: String,
+    workspace_state: ProjectWorkspaceState,
+) -> Result<(), String> {
+    with_error_handling(|| {
+        let mut registry = state.registry.lock().unwrap();
+        registry.save_workspace_state(&project_id, workspace_state)
     })
 }
 
@@ -175,10 +258,48 @@ fn resize_terminal(
 }
 
 #[tauri::command]
-fn close_terminal(state: State<FlowtermState>, session_id: String) -> Result<(), String> {
+fn close_terminal(
+    state: State<FlowtermState>,
+    project_id: String,
+    session_id: String,
+) -> Result<(), String> {
     with_error_handling(|| {
         let mut terminals = state.terminals.lock().unwrap();
-        terminals.close(&session_id);
+        terminals.close(state.registry.clone(), &project_id, &session_id);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn read_performance_probe_state(
+    state: State<FlowtermState>,
+) -> Result<PerformanceProbeState, String> {
+    with_error_handling(|| {
+        Ok(PerformanceProbeState {
+            enabled: state.performance_probe.enabled,
+            process_id: std::process::id(),
+            project_root: state
+                .performance_probe
+                .project_root
+                .as_ref()
+                .map(|value| value.to_string_lossy().to_string()),
+            process_uptime_ms: state.performance_probe.process_uptime_ms(),
+            scenario: state.performance_probe.scenario.clone(),
+        })
+    })
+}
+
+#[tauri::command]
+fn complete_performance_probe(
+    app: AppHandle,
+    state: State<FlowtermState>,
+    report: PerformanceProbeReport,
+    exit_code: i32,
+) -> Result<(), String> {
+    with_error_handling(|| {
+        let payload = serde_json::to_vec_pretty(&report)?;
+        state.performance_probe.write_report(&payload)?;
+        app.exit(exit_code);
         Ok(())
     })
 }
@@ -208,10 +329,15 @@ pub fn run() {
             attach_terminal,
             bootstrap_app,
             close_terminal,
+            complete_performance_probe,
+            list_terminals,
             read_file_preview,
+            read_performance_probe_state,
+            read_project_workspace,
             refresh_project_snapshot,
             remove_project,
             resize_terminal,
+            save_project_workspace,
             write_terminal,
         ])
         .run(tauri::generate_context!())
@@ -232,14 +358,19 @@ fn build_bootstrap(app: &AppHandle, state: &State<FlowtermState>) -> Result<AppB
         .as_ref()
         .map(|project| build_snapshot(state, project))
         .transpose()?;
-    let terminal = active_project
-        .as_ref()
-        .map(|project| {
-            let mut terminals = state.terminals.lock().unwrap();
-            terminals.attach_or_create(app.clone(), &project.id, &PathBuf::from(&project.path), None)
-        })
-        .transpose()?;
-    let projects = collect_project_summaries(state)?;
+    let terminals = if let Some(project) = active_project.as_ref() {
+        restore_project_terminals(app, state, project)?
+    } else {
+        Vec::new()
+    };
+    let workspace_state = if let Some(project) = active_project.as_ref() {
+        let registry = state.registry.lock().unwrap();
+        Some(registry.workspace_state_for(&project.id)?)
+    } else {
+        None
+    };
+    let projects =
+        collect_project_summaries(state, snapshot.as_ref().map(|snapshot| &snapshot.project))?;
     let active_project_id = {
         let registry = state.registry.lock().unwrap();
         registry.active_project_id()
@@ -249,11 +380,15 @@ fn build_bootstrap(app: &AppHandle, state: &State<FlowtermState>) -> Result<AppB
         active_project_id,
         projects,
         snapshot,
-        terminal,
+        terminals,
+        workspace_state,
     })
 }
 
-fn build_snapshot(state: &State<FlowtermState>, project: &models::ProjectRecord) -> Result<ProjectSnapshot> {
+fn build_snapshot(
+    state: &State<FlowtermState>,
+    project: &models::ProjectRecord,
+) -> Result<ProjectSnapshot> {
     let live_files = {
         let registry = state.registry.lock().unwrap();
         registry.live_files_for(&project.id)
@@ -280,14 +415,25 @@ fn build_snapshot(state: &State<FlowtermState>, project: &models::ProjectRecord)
     })
 }
 
-fn collect_project_summaries(state: &State<FlowtermState>) -> Result<Vec<ProjectSummary>> {
+fn collect_project_summaries(
+    state: &State<FlowtermState>,
+    active_summary: Option<&ProjectSummary>,
+) -> Result<Vec<ProjectSummary>> {
     let projects = {
         let registry = state.registry.lock().unwrap();
         registry.projects()
     };
     let mut summaries = Vec::new();
+    let active_summary_by_id = active_summary.map(|summary| (summary.id.as_str(), summary));
 
     for project in projects {
+        if let Some((active_project_id, summary)) = active_summary_by_id {
+            if project.id == active_project_id {
+                summaries.push(summary.clone());
+                continue;
+            }
+        }
+
         let live_files = {
             let registry = state.registry.lock().unwrap();
             registry.live_files_for(&project.id)
@@ -329,6 +475,40 @@ fn ensure_active_watch(
         project_id,
         &PathBuf::from(project_path),
     )
+}
+
+fn restore_project_terminals(
+    app: &AppHandle,
+    state: &State<FlowtermState>,
+    project: &models::ProjectRecord,
+) -> Result<Vec<TerminalAttachment>> {
+    let persisted_panes = {
+        let registry = state.registry.lock().unwrap();
+        registry.saved_terminal_panes(&project.id)?
+    };
+    let panes = if persisted_panes.is_empty() {
+        vec![PersistedTerminalPane {
+            cwd: Some(project.path.clone()),
+            pane_id: "main".to_string(),
+        }]
+    } else {
+        persisted_panes
+    };
+    let mut terminals = state.terminals.lock().unwrap();
+    let mut attachments = Vec::with_capacity(panes.len());
+
+    for pane in panes {
+        attachments.push(terminals.attach_or_create(
+            app.clone(),
+            state.registry.clone(),
+            &project.id,
+            &PathBuf::from(&project.path),
+            Some(&pane.pane_id),
+            pane.cwd.as_deref(),
+        )?);
+    }
+
+    Ok(attachments)
 }
 
 fn with_error_handling<T>(operation: impl FnOnce() -> Result<T>) -> Result<T, String> {

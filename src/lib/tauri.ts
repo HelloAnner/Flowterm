@@ -4,6 +4,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   AppBootstrap,
   FilePreview,
+  PerformanceProbeReport,
+  PerformanceProbeState,
+  ProjectWorkspaceState,
   ProjectRefreshEvent,
   ProjectSnapshot,
   TerminalAttachment,
@@ -71,6 +74,25 @@ export async function attachTerminal(
   return invoke<TerminalAttachment>('attach_terminal', { paneId, projectId })
 }
 
+export async function listTerminals(
+  projectId: string,
+): Promise<TerminalAttachment[]> {
+  return invoke<TerminalAttachment[]>('list_terminals', { projectId })
+}
+
+export async function readProjectWorkspace(
+  projectId: string,
+): Promise<ProjectWorkspaceState> {
+  return invoke<ProjectWorkspaceState>('read_project_workspace', { projectId })
+}
+
+export async function saveProjectWorkspace(
+  projectId: string,
+  workspaceState: ProjectWorkspaceState,
+): Promise<void> {
+  return invoke('save_project_workspace', { projectId, workspaceState })
+}
+
 export async function writeTerminal(
   sessionId: string,
   data: string,
@@ -86,8 +108,22 @@ export async function resizeTerminal(
   return invoke('resize_terminal', { sessionId, cols, rows })
 }
 
-export async function closeTerminal(sessionId: string): Promise<void> {
-  return invoke('close_terminal', { sessionId })
+export async function closeTerminal(
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
+  return invoke('close_terminal', { projectId, sessionId })
+}
+
+export async function readPerformanceProbeState(): Promise<PerformanceProbeState> {
+  return invoke<PerformanceProbeState>('read_performance_probe_state')
+}
+
+export async function completePerformanceProbe(
+  report: PerformanceProbeReport,
+  exitCode = 0,
+): Promise<void> {
+  return invoke('complete_performance_probe', { exitCode, report })
 }
 
 export async function listenProjectRefresh(

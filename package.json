@@ -4,13 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "tsc -b && vite build",
     "start": "tauri dev",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
+    "test:e2e:performance": "vitest run e2e/performance.e2e.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^3.0.6",
+    "react-syntax-highlighter": "16.1.1",
     "tailwind-merge": "^3.4.0",
     "zustand": "^5.0.8"
   },
@@ -42,6 +44,7 @@
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",

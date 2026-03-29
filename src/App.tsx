@@ -1,4 +1,10 @@
-import { type ReactElement, useEffect, useEffectEvent, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  type ReactElement,
+  useEffect,
+  useState,
+} from 'react'
 import { AlertTriangle } from 'lucide-react'
 import {
   Panel,
@@ -7,19 +13,18 @@ import {
 } from 'react-resizable-panels'
 
 import { AddProjectDialog } from './components/add-project-dialog'
-import { WorkspaceDiffPanel } from './components/workspace-diff-panel'
 import { WorkspaceFileTree } from './components/workspace-file-tree'
 import {
   WorkspaceSidebar,
   type WorkspaceSidebarView,
 } from './components/workspace-sidebar'
 import { WorkspaceTabBar } from './components/workspace-tab-bar'
-import { WorkspaceTerminal } from './components/workspace-terminal'
 import {
   buildTerminalPaneDescriptors,
   createTerminalProjectState,
 } from './features/workspace/terminal-panes'
 import { publishTerminalOutput } from './features/workspace/terminal-stream'
+import { maybeStartPerformanceProbe } from './e2e/performance-probe'
 import {
   isTauriEnvironment,
   listenProjectRefresh,
@@ -29,6 +34,12 @@ import {
 import { useWorkspaceStore } from './stores/workspace-store'
 
 const EMPTY_TERMINAL_PROJECT_STATE = createTerminalProjectState()
+const WorkspaceDiffPanel = lazy(async () => ({
+  default: (await import('./components/workspace-diff-panel')).WorkspaceDiffPanel,
+}))
+const WorkspaceTerminal = lazy(async () => ({
+  default: (await import('./components/workspace-terminal')).WorkspaceTerminal,
+}))
 
 function App(): ReactElement {
   const [workspaceSidebarView, setWorkspaceSidebarView] =
@@ -47,25 +58,36 @@ function App(): ReactElement {
   const selectFile = useWorkspaceStore((state) => state.selectFile)
   const selectedFilePath = useWorkspaceStore((state) => state.selectedFilePath)
   const selectProject = useWorkspaceStore((state) => state.selectProject)
+  const setTreeExpandedPaths = useWorkspaceStore((state) => state.setTreeExpandedPaths)
   const snapshot = useWorkspaceStore((state) => state.snapshot)
   const addTerminalPane = useWorkspaceStore((state) => state.addTerminalPane)
   const removeTerminalPane = useWorkspaceStore((state) => state.removeTerminalPane)
   const resizeTerminal = useWorkspaceStore((state) => state.resizeTerminal)
+  const updateTerminalPaneSizes = useWorkspaceStore((state) => state.updateTerminalPaneSizes)
   const terminalProjectStateForActiveProject = useWorkspaceStore(
     (state) =>
       (activeProjectId ? state.terminalProjectStateByProject[activeProjectId] : null) ?? null,
   )
   const terminalProjectState =
     terminalProjectStateForActiveProject ?? EMPTY_TERMINAL_PROJECT_STATE
+  const workspaceStateForActiveProject = useWorkspaceStore(
+    (state) => (activeProjectId ? state.workspaceStateByProject[activeProjectId] : null) ?? null,
+  )
   const updateTerminalState = useWorkspaceStore((state) => state.updateTerminalState)
   const writeTerminal = useWorkspaceStore((state) => state.writeTerminal)
-  const requestPreviewWindow = useEffectEvent((startLine: number, lineCount: number) => {
+  const treeExpandedPaths = workspaceStateForActiveProject?.treeExpandedPaths ?? {}
+  const terminalPaneSizes = workspaceStateForActiveProject?.terminalPaneSizes ?? []
+  const requestPreviewWindow = (startLine: number, lineCount: number) => {
     void fetchFilePreview(activeProjectId, selectedFilePath, { lineCount, startLine })
-  })
+  }
 
   useEffect(() => {
     void bootstrap()
   }, [bootstrap])
+
+  useEffect(() => {
+    void maybeStartPerformanceProbe()
+  }, [])
 
   useEffect(() => {
     if (!isTauriEnvironment()) {
@@ -132,7 +154,13 @@ function App(): ReactElement {
             >
               {workspaceSidebarView === 'tree' ? (
                 <WorkspaceFileTree
+                  expandedPaths={treeExpandedPaths}
                   files={snapshot.files}
+                  onExpandedPathsChange={(expandedPaths) => {
+                    if (activeProjectId) {
+                      setTreeExpandedPaths(activeProjectId, expandedPaths)
+                    }
+                  }}
                   onSelectFile={selectFile}
                   selectedFilePath={selectedFilePath}
                 />
@@ -141,24 +169,34 @@ function App(): ReactElement {
           </Panel>
           <ResizeHandle />
           <Panel defaultSize={55} minSize={28}>
-            <WorkspaceDiffPanel
-              isLoading={isFilePreviewLoading}
-              onRequestWindow={requestPreviewWindow}
-              preview={filePreview}
-              selectedFilePath={selectedFilePath}
-            />
+            <Suspense fallback={<PanelFallback message="正在准备工作区预览..." />}>
+              <WorkspaceDiffPanel
+                isLoading={isFilePreviewLoading}
+                onRequestWindow={requestPreviewWindow}
+                preview={filePreview}
+                selectedFilePath={selectedFilePath}
+              />
+            </Suspense>
           </Panel>
           <ResizeHandle />
           <Panel defaultSize={30} minSize={20}>
-            <WorkspaceTerminal
-              onAddPane={() => activeProjectId && void addTerminalPane(activeProjectId)}
-              onRemovePane={(paneId) =>
-                activeProjectId && void removeTerminalPane(activeProjectId, paneId)
-              }
-              panes={buildTerminalPaneDescriptors(terminalProjectState)}
-              resizeTerminal={resizeTerminal}
-              writeTerminal={writeTerminal}
-            />
+            <Suspense fallback={<PanelFallback message="正在连接终端..." />}>
+              <WorkspaceTerminal
+                onAddPane={() => activeProjectId && void addTerminalPane(activeProjectId)}
+                onLayout={(sizes) => {
+                  if (activeProjectId) {
+                    updateTerminalPaneSizes(activeProjectId, sizes)
+                  }
+                }}
+                onRemovePane={(paneId) =>
+                  activeProjectId && void removeTerminalPane(activeProjectId, paneId)
+                }
+                paneSizes={terminalPaneSizes}
+                panes={buildTerminalPaneDescriptors(terminalProjectState)}
+                resizeTerminal={resizeTerminal}
+                writeTerminal={writeTerminal}
+              />
+            </Suspense>
           </Panel>
         </PanelGroup>
       ) : (
@@ -180,6 +218,18 @@ function ResizeHandle(): ReactElement {
     <PanelResizeHandle className="group relative w-px bg-[var(--border-subtle)] transition-colors data-[resize-handle-active]:bg-[var(--accent-amber)]">
       <span className="absolute inset-y-0 -left-1 -right-1 group-hover:bg-[rgba(200,169,110,0.12)]" />
     </PanelResizeHandle>
+  )
+}
+
+function PanelFallback({
+  message,
+}: {
+  message: string
+}): ReactElement {
+  return (
+    <div className="flex h-full min-h-0 items-center justify-center bg-[var(--bg-base)] px-6 text-center font-mono text-[12px] tracking-wide text-[var(--text-muted)]">
+      {message}
+    </div>
   )
 }
 

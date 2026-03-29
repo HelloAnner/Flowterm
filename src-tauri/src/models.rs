@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -6,7 +7,8 @@ pub struct AppBootstrap {
     pub active_project_id: Option<String>,
     pub projects: Vec<ProjectSummary>,
     pub snapshot: Option<ProjectSnapshot>,
-    pub terminal: Option<TerminalAttachment>,
+    pub terminals: Vec<TerminalAttachment>,
+    pub workspace_state: Option<ProjectWorkspaceState>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -71,12 +73,28 @@ pub struct DiffLine {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachment {
+    pub cwd: Option<String>,
     pub history: String,
     pub pane_id: String,
     pub project_id: String,
     pub session_id: String,
     pub shell_label: String,
     pub state: TerminalState,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedTerminalPane {
+    pub cwd: Option<String>,
+    pub pane_id: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWorkspaceState {
+    pub selected_file_path: Option<String>,
+    pub terminal_pane_sizes: Vec<f64>,
+    pub tree_expanded_paths: HashMap<String, bool>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -128,6 +146,24 @@ pub struct TerminalStateEvent {
     pub project_id: String,
     pub session_id: String,
     pub state: TerminalState,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerformanceProbeState {
+    pub enabled: bool,
+    pub process_id: u32,
+    pub project_root: Option<String>,
+    pub process_uptime_ms: u64,
+    pub scenario: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerformanceProbeReport {
+    pub metadata: HashMap<String, String>,
+    pub metrics: HashMap<String, f64>,
+    pub scenario: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

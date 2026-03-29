@@ -6,6 +6,7 @@ import type {
 import type { TerminalPaneDescriptor } from '../../components/workspace-terminal'
 
 export interface TerminalPaneState {
+  cwd: string | null
   history: string
   paneId: string
   projectId: string
@@ -37,6 +38,7 @@ export function applyTerminalAttachment(
     panesById: {
       ...state.panesById,
       [attachment.paneId]: {
+        cwd: attachment.cwd,
         history: attachment.history,
         paneId: attachment.paneId,
         projectId: attachment.projectId,
@@ -94,6 +96,7 @@ export function buildTerminalPaneDescriptors(
     .map((paneId) => state.panesById[paneId])
     .filter((pane): pane is TerminalPaneState => Boolean(pane))
     .map((pane) => ({
+      cwd: pane.cwd,
       history: pane.history,
       id: pane.paneId,
       projectId: pane.projectId,

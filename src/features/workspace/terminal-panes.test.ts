@@ -10,6 +10,7 @@ import {
 } from './terminal-panes'
 
 const primaryAttachment: TerminalAttachment = {
+  cwd: '/Users/anner/Flowterm',
   history: '$ pwd\n/Users/anner/Flowterm\n',
   paneId: 'pane-main',
   projectId: 'project-a',
@@ -19,6 +20,7 @@ const primaryAttachment: TerminalAttachment = {
 }
 
 const splitAttachment: TerminalAttachment = {
+  cwd: '/Users/anner/Flowterm/src',
   history: '$ git status --short\n M src/App.tsx\n',
   paneId: 'pane-split',
   projectId: 'project-a',
@@ -36,11 +38,13 @@ describe('terminal pane state', () => {
 
     expect(state.paneOrder).toEqual(['pane-main', 'pane-split'])
     expect(state.panesById['pane-main']).toMatchObject({
+      cwd: '/Users/anner/Flowterm',
       history: '$ pwd\n/Users/anner/Flowterm\n',
       sessionId: 'session-main',
       state: 'idle',
     })
     expect(state.panesById['pane-split']).toMatchObject({
+      cwd: '/Users/anner/Flowterm/src',
       history: '$ git status --short\n M src/App.tsx\n',
       sessionId: 'session-split',
       state: 'running',
@@ -64,10 +68,12 @@ describe('terminal pane state', () => {
     )
 
     expect(state.panesById['pane-main']).toMatchObject({
+      cwd: '/Users/anner/Flowterm',
       history: '$ pwd\n/Users/anner/Flowterm\n',
       state: 'idle',
     })
     expect(state.panesById['pane-split']).toMatchObject({
+      cwd: '/Users/anner/Flowterm/src',
       history: '$ git status --short\n M src/App.tsx\n',
       state: 'attention',
     })
@@ -81,6 +87,7 @@ describe('terminal pane state', () => {
 
     expect(buildTerminalPaneDescriptors(state)).toEqual([
       {
+        cwd: '/Users/anner/Flowterm',
         history: '$ pwd\n/Users/anner/Flowterm\n',
         id: 'pane-main',
         projectId: 'project-a',
@@ -89,6 +96,7 @@ describe('terminal pane state', () => {
         state: 'idle',
       },
       {
+        cwd: '/Users/anner/Flowterm/src',
         history: '$ git status --short\n M src/App.tsx\n',
         id: 'pane-split',
         projectId: 'project-a',
@@ -111,6 +119,7 @@ describe('terminal pane state', () => {
     expect(state.paneOrder).toEqual(['pane-split'])
     expect(state.panesById).toEqual({
       'pane-split': expect.objectContaining({
+        cwd: '/Users/anner/Flowterm/src',
         history: '$ git status --short\n M src/App.tsx\n',
         sessionId: 'session-split',
       }),

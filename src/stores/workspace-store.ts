@@ -8,10 +8,13 @@ import {
   bootstrapApp,
   closeTerminal as closeTerminalCommand,
   isTauriEnvironment,
+  listTerminals,
   readFilePreview,
+  readProjectWorkspace,
   refreshProjectSnapshot,
   removeProject as removeProjectCommand,
   resizeTerminal as resizeTerminalCommand,
+  saveProjectWorkspace,
   writeTerminal as writeTerminalCommand,
 } from '../lib/tauri'
 import type {
@@ -19,9 +22,14 @@ import type {
   FilePreview,
   ProjectSnapshot,
   ProjectSummary,
+  ProjectWorkspaceState,
   TerminalAttachment,
   TerminalStateEvent,
 } from '../lib/contracts'
+import {
+  createProjectWorkspaceState,
+  normalizeTerminalPaneSizes,
+} from '../features/workspace/project-memory'
 import { resolveSelectedFilePath } from '../features/workspace/selection'
 import {
   applyTerminalAttachment as applyTerminalPaneAttachment,
@@ -48,6 +56,7 @@ interface WorkspaceState {
   selectedFilePath: string | null
   snapshot: ProjectSnapshot | null
   terminalProjectStateByProject: Record<string, TerminalProjectState>
+  workspaceStateByProject: Record<string, ProjectWorkspaceState>
   addTerminalPane: (projectId: string) => Promise<void>
   applyBootstrap: (bootstrap: AppBootstrap) => void
   attachTerminalPane: (projectId: string, paneId?: string) => Promise<TerminalAttachment>
@@ -71,7 +80,9 @@ interface WorkspaceState {
   selectProject: (projectId: string) => Promise<void>
   setDraftName: (value: string) => void
   setDraftPath: (value: string) => void
+  setTreeExpandedPaths: (projectId: string, expandedPaths: Record<string, boolean>) => void
   submitProject: () => Promise<void>
+  updateTerminalPaneSizes: (projectId: string, paneSizes: number[]) => void
   updateTerminalState: (event: TerminalStateEvent) => void
   writeTerminal: (sessionId: string, data: string) => Promise<void>
 }
@@ -90,6 +101,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   selectedFilePath: null,
   snapshot: null,
   terminalProjectStateByProject: {},
+  workspaceStateByProject: {},
   addTerminalPane: async (projectId) => {
     const projectState = ensureProjectTerminalState(
       get().terminalProjectStateByProject,
@@ -101,20 +113,51 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     await get().attachTerminalPane(projectId, createPaneId())
+    const nextPaneCount =
+      ensureProjectTerminalState(get().terminalProjectStateByProject, projectId).paneOrder.length
+    get().updateTerminalPaneSizes(
+      projectId,
+      normalizeTerminalPaneSizes([], nextPaneCount),
+    )
   },
   applyBootstrap: (bootstrap) => {
+    const selectedFilePath = resolveSnapshotSelection(
+      bootstrap.snapshot,
+      bootstrap.workspaceState?.selectedFilePath ?? get().selectedFilePath,
+    )
     const allowedProjectIds = new Set(bootstrap.projects.map((project) => project.id))
     const terminalProjectStateByProject = Object.fromEntries(
       Object.entries(get().terminalProjectStateByProject).filter(([projectId]) =>
         allowedProjectIds.has(projectId),
       ),
     )
+    const workspaceStateByProject = Object.fromEntries(
+      Object.entries(get().workspaceStateByProject).filter(([projectId]) =>
+        allowedProjectIds.has(projectId),
+      ),
+    )
 
-    if (bootstrap.terminal) {
-      terminalProjectStateByProject[bootstrap.terminal.projectId] = applyTerminalPaneAttachment(
-        ensureProjectTerminalState(terminalProjectStateByProject, bootstrap.terminal.projectId),
-        bootstrap.terminal,
+    for (const terminal of bootstrap.terminals) {
+      terminalProjectStateByProject[terminal.projectId] = applyTerminalPaneAttachment(
+        ensureProjectTerminalState(terminalProjectStateByProject, terminal.projectId),
+        terminal,
       )
+    }
+
+    if (bootstrap.activeProjectId) {
+      const activeProjectId = bootstrap.activeProjectId
+      const paneCount = ensureProjectTerminalState(
+        terminalProjectStateByProject,
+        activeProjectId,
+      ).paneOrder.length
+      workspaceStateByProject[activeProjectId] = {
+        ...(bootstrap.workspaceState ?? createProjectWorkspaceState()),
+        selectedFilePath,
+        terminalPaneSizes: normalizeTerminalPaneSizes(
+          bootstrap.workspaceState?.terminalPaneSizes ?? [],
+          paneCount,
+        ),
+      }
     }
 
     set({
@@ -122,10 +165,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       error: null,
       filePreview: null,
       isBooting: false,
+      isFilePreviewLoading: Boolean(bootstrap.activeProjectId && selectedFilePath),
       projects: bootstrap.projects,
-      selectedFilePath: resolveSnapshotSelection(bootstrap.snapshot, get().selectedFilePath),
+      selectedFilePath,
       snapshot: bootstrap.snapshot,
       terminalProjectStateByProject,
+      workspaceStateByProject,
     })
   },
   attachTerminalPane: async (projectId, paneId) => {
@@ -158,12 +203,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const bootstrap = await bootstrapApp()
       get().applyBootstrap(bootstrap)
 
-      if (bootstrap.activeProjectId) {
-        await get().attachTerminalPane(bootstrap.activeProjectId)
-        await get().fetchFilePreview(
-          bootstrap.activeProjectId,
-          resolveSnapshotSelection(bootstrap.snapshot, get().selectedFilePath),
-        )
+      if (bootstrap.activeProjectId && get().selectedFilePath) {
+        void get().fetchFilePreview(bootstrap.activeProjectId, get().selectedFilePath)
       }
     } catch (error) {
       set({
@@ -252,13 +293,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     try {
       const snapshot = await refreshProjectSnapshot(targetProjectId)
-      const selectedFilePath = resolveSnapshotSelection(snapshot, get().selectedFilePath)
+      const workspaceState = ensureProjectWorkspaceState(
+        get().workspaceStateByProject,
+        targetProjectId,
+      )
+      const selectedFilePath = resolveSnapshotSelection(
+        snapshot,
+        workspaceState.selectedFilePath,
+      )
       set({
         error: null,
+        isFilePreviewLoading: Boolean(selectedFilePath),
         selectedFilePath,
         snapshot,
+        workspaceStateByProject: {
+          ...get().workspaceStateByProject,
+          [targetProjectId]: {
+            ...workspaceState,
+            selectedFilePath,
+          },
+        },
       })
-      await get().fetchFilePreview(targetProjectId, selectedFilePath)
+      void persistProjectWorkspace(targetProjectId, get)
+      void get().fetchFilePreview(targetProjectId, selectedFilePath)
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '刷新项目失败' })
     }
@@ -268,12 +325,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const bootstrap = await removeProjectCommand(projectId)
       get().applyBootstrap(bootstrap)
 
-      if (bootstrap.activeProjectId) {
-        await get().attachTerminalPane(bootstrap.activeProjectId)
-        await get().fetchFilePreview(
-          bootstrap.activeProjectId,
-          resolveSnapshotSelection(bootstrap.snapshot, get().selectedFilePath),
-        )
+      if (bootstrap.activeProjectId && get().selectedFilePath) {
+        void get().fetchFilePreview(bootstrap.activeProjectId, get().selectedFilePath)
       } else {
         set({ filePreview: null, isFilePreviewLoading: false })
       }
@@ -298,18 +351,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     if (isTauriEnvironment()) {
-      await closeTerminalCommand(pane.sessionId)
+      await closeTerminalCommand(projectId, pane.sessionId)
     }
 
-    set((state) => ({
-      terminalProjectStateByProject: {
-        ...state.terminalProjectStateByProject,
-        [projectId]: removeTerminalPaneState(
-          ensureProjectTerminalState(state.terminalProjectStateByProject, projectId),
-          paneId,
-        ),
-      },
-    }))
+    set((state) => {
+      const terminalProjectState = removeTerminalPaneState(
+        ensureProjectTerminalState(state.terminalProjectStateByProject, projectId),
+        paneId,
+      )
+      const workspaceState = ensureProjectWorkspaceState(
+        state.workspaceStateByProject,
+        projectId,
+      )
+
+      return {
+        terminalProjectStateByProject: {
+          ...state.terminalProjectStateByProject,
+          [projectId]: terminalProjectState,
+        },
+        workspaceStateByProject: {
+          ...state.workspaceStateByProject,
+          [projectId]: {
+            ...workspaceState,
+            terminalPaneSizes: normalizeTerminalPaneSizes(
+              workspaceState.terminalPaneSizes,
+              terminalProjectState.paneOrder.length,
+            ),
+          },
+        },
+      }
+    })
+    void persistProjectWorkspace(projectId, get)
   },
   resizeTerminal: async (sessionId, cols, rows) => {
     if (!isTauriEnvironment()) {
@@ -319,22 +391,70 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await resizeTerminalCommand(sessionId, cols, rows)
   },
   selectFile: async (path) => {
-    set({ selectedFilePath: path })
-    await get().fetchFilePreview(get().activeProjectId, path)
+    const projectId = get().activeProjectId
+
+    if (!projectId) {
+      return
+    }
+
+    set((state) => ({
+      isFilePreviewLoading: true,
+      selectedFilePath: path,
+      workspaceStateByProject: {
+        ...state.workspaceStateByProject,
+        [projectId]: {
+          ...ensureProjectWorkspaceState(state.workspaceStateByProject, projectId),
+          selectedFilePath: path,
+        },
+      },
+    }))
+    void persistProjectWorkspace(projectId, get)
+    await get().fetchFilePreview(projectId, path)
   },
   selectProject: async (projectId) => {
     try {
-      const snapshot = await activateProject(projectId)
-      const selectedFilePath = resolveSnapshotSelection(snapshot, get().selectedFilePath)
+      const [snapshot, workspaceState, terminals] = await Promise.all([
+        activateProject(projectId),
+        isTauriEnvironment()
+          ? readProjectWorkspace(projectId)
+          : Promise.resolve(createProjectWorkspaceState()),
+        isTauriEnvironment()
+          ? listTerminals(projectId)
+          : Promise.resolve([createMockTerminalAttachment(projectId, 'main')]),
+      ])
+      const terminalProjectState = terminals.reduce(
+        (state, terminal) => applyTerminalPaneAttachment(state, terminal),
+        createTerminalProjectState(),
+      )
+      const selectedFilePath = resolveSnapshotSelection(
+        snapshot,
+        workspaceState.selectedFilePath,
+      )
       set({
         activeProjectId: projectId,
         error: null,
         filePreview: null,
+        isFilePreviewLoading: Boolean(selectedFilePath),
         selectedFilePath,
         snapshot,
+        terminalProjectStateByProject: {
+          ...get().terminalProjectStateByProject,
+          [projectId]: terminalProjectState,
+        },
+        workspaceStateByProject: {
+          ...get().workspaceStateByProject,
+          [projectId]: {
+            ...workspaceState,
+            selectedFilePath,
+            terminalPaneSizes: normalizeTerminalPaneSizes(
+              workspaceState.terminalPaneSizes,
+              terminalProjectState.paneOrder.length,
+            ),
+          },
+        },
       })
-      await get().attachTerminalPane(projectId)
-      await get().fetchFilePreview(projectId, selectedFilePath)
+      void persistProjectWorkspace(projectId, get)
+      void get().fetchFilePreview(projectId, selectedFilePath)
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '切换项目失败' })
     }
@@ -344,6 +464,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   setDraftPath: (value) => {
     set({ draftPath: value })
+  },
+  setTreeExpandedPaths: (projectId, expandedPaths) => {
+    set((state) => ({
+      workspaceStateByProject: {
+        ...state.workspaceStateByProject,
+        [projectId]: {
+          ...ensureProjectWorkspaceState(state.workspaceStateByProject, projectId),
+          treeExpandedPaths: expandedPaths,
+        },
+      },
+    }))
+    void persistProjectWorkspace(projectId, get)
   },
   submitProject: async () => {
     const path = get().draftPath.trim()
@@ -363,16 +495,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         isProjectDialogOpen: false,
       })
 
-      if (bootstrap.activeProjectId) {
-        await get().attachTerminalPane(bootstrap.activeProjectId)
-        await get().fetchFilePreview(
-          bootstrap.activeProjectId,
-          resolveSnapshotSelection(bootstrap.snapshot, get().selectedFilePath),
-        )
+      if (bootstrap.activeProjectId && get().selectedFilePath) {
+        void get().fetchFilePreview(bootstrap.activeProjectId, get().selectedFilePath)
       }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '添加项目失败' })
     }
+  },
+  updateTerminalPaneSizes: (projectId, paneSizes) => {
+    const paneCount = ensureProjectTerminalState(
+      get().terminalProjectStateByProject,
+      projectId,
+    ).paneOrder.length
+    set((state) => ({
+      workspaceStateByProject: {
+        ...state.workspaceStateByProject,
+        [projectId]: {
+          ...ensureProjectWorkspaceState(state.workspaceStateByProject, projectId),
+          terminalPaneSizes: normalizeTerminalPaneSizes(paneSizes, paneCount),
+        },
+      },
+    }))
+    void persistProjectWorkspace(projectId, get)
   },
   updateTerminalState: (event) => {
     set((state) => ({
@@ -412,6 +556,29 @@ function ensureProjectTerminalState(
   return terminalProjectStateByProject[projectId] ?? createTerminalProjectState()
 }
 
+function ensureProjectWorkspaceState(
+  workspaceStateByProject: Record<string, ProjectWorkspaceState>,
+  projectId: string,
+): ProjectWorkspaceState {
+  return workspaceStateByProject[projectId] ?? createProjectWorkspaceState()
+}
+
+async function persistProjectWorkspace(
+  projectId: string,
+  get: () => WorkspaceState,
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return
+  }
+
+  const workspaceState = ensureProjectWorkspaceState(
+    get().workspaceStateByProject,
+    projectId,
+  )
+
+  await saveProjectWorkspace(projectId, workspaceState)
+}
+
 function createPaneId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `pane-${crypto.randomUUID()}`
@@ -443,12 +610,20 @@ function createMockBootstrap(): AppBootstrap {
       ],
       project,
     },
-    terminal: createMockTerminalAttachment(project.id, 'main', {
-      history:
-        '$ cargo check\n    Checking flowterm v0.1.0\n    Finished dev [unoptimized + debuginfo] target(s) in 1.48s\n',
-      sessionId: 'session-main',
-      state: 'running',
-    }),
+    terminals: [
+      createMockTerminalAttachment(project.id, 'main', {
+        cwd: project.path,
+        history:
+          '$ pwd\n/Users/anner/Flowterm\n$ git status --short\n M src/App.tsx\n',
+        sessionId: 'session-main',
+        state: 'running',
+      }),
+    ],
+    workspaceState: {
+      selectedFilePath: 'src/App.tsx',
+      terminalPaneSizes: [100],
+      treeExpandedPaths: {},
+    },
   }
 }
 
@@ -458,6 +633,7 @@ function createMockTerminalAttachment(
   overrides?: Partial<TerminalAttachment>,
 ): TerminalAttachment {
   return {
+    cwd: null,
     history: '',
     paneId,
     projectId,

@@ -46,6 +46,7 @@ export interface ProjectSnapshot {
 }
 
 export interface TerminalAttachment {
+  cwd: string | null
   history: string
   paneId: string
   projectId: string
@@ -54,11 +55,18 @@ export interface TerminalAttachment {
   state: TerminalState
 }
 
+export interface ProjectWorkspaceState {
+  selectedFilePath: string | null
+  terminalPaneSizes: number[]
+  treeExpandedPaths: Record<string, boolean>
+}
+
 export interface AppBootstrap {
   activeProjectId: string | null
   projects: ProjectSummary[]
   snapshot: ProjectSnapshot | null
-  terminal: TerminalAttachment | null
+  terminals: TerminalAttachment[]
+  workspaceState: ProjectWorkspaceState | null
 }
 
 export interface ProjectRefreshEvent {
@@ -77,4 +85,18 @@ export interface TerminalStateEvent {
   projectId: string
   sessionId: string
   state: TerminalState
+}
+
+export interface PerformanceProbeState {
+  enabled: boolean
+  processId: number
+  projectRoot: string | null
+  processUptimeMs: number
+  scenario: string | null
+}
+
+export interface PerformanceProbeReport {
+  metadata: Record<string, string>
+  metrics: Record<string, number>
+  scenario: string
 }

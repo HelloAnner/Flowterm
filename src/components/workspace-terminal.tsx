@@ -11,6 +11,7 @@ import { cn } from '../lib/utils'
 import type { TerminalState } from '../lib/contracts'
 
 export interface TerminalPaneDescriptor {
+  cwd: string | null
   id: string
   history: string
   projectId: string
@@ -21,7 +22,9 @@ export interface TerminalPaneDescriptor {
 
 interface WorkspaceTerminalProps {
   onAddPane: () => void
+  onLayout: (sizes: number[]) => void
   onRemovePane: (paneId: string) => void
+  paneSizes: number[]
   panes: TerminalPaneDescriptor[]
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
   writeTerminal: (sessionId: string, data: string) => Promise<void>
@@ -29,7 +32,9 @@ interface WorkspaceTerminalProps {
 
 export function WorkspaceTerminal({
   onAddPane,
+  onLayout,
   onRemovePane,
+  paneSizes,
   panes,
   resizeTerminal,
   writeTerminal,
@@ -49,7 +54,12 @@ export function WorkspaceTerminal({
           </button>
         ) : null}
       </div>
-      <PanelGroup className="min-h-0 flex-1" direction="vertical">
+      <PanelGroup
+        className="min-h-0 flex-1"
+        direction="vertical"
+        key={`${panes[0]?.projectId ?? 'terminal'}-${panes.map((pane) => pane.id).join(':')}`}
+        onLayout={onLayout}
+      >
         {panes.flatMap((pane, index) =>
           [
             index > 0 ? (
@@ -60,7 +70,11 @@ export function WorkspaceTerminal({
                 <span className="block h-px bg-[#1c1c1c] group-hover:bg-[var(--border-subtle)]" />
               </PanelResizeHandle>
             ) : null,
-            <Panel key={pane.id} minSize={15}>
+            <Panel
+              defaultSize={paneSizes[index]}
+              key={pane.id}
+              minSize={15}
+            >
               <TerminalPane
                 onRemove={panes.length > 1 ? () => onRemovePane(pane.id) : null}
                 pane={pane}
@@ -183,6 +197,11 @@ function TerminalPane({
           {resolveTerminalLabel(pane.state)}
         </span>
         <div className="flex items-center gap-2">
+          {pane.cwd ? (
+            <span className="max-w-40 truncate font-mono text-[11px] text-[var(--text-muted)]">
+              {pane.cwd.split('/').pop()}
+            </span>
+          ) : null}
           <span className="font-mono text-[11px] text-[var(--text-muted)]">{pane.shellLabel}</span>
           {onRemove ? (
             <button

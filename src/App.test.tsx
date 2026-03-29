@@ -15,14 +15,23 @@ vi.mock('./lib/tauri', () => ({
   attachTerminal: vi.fn(),
   bootstrapApp: vi.fn(() => neverSettledBootstrap),
   closeTerminal: vi.fn(),
+  completePerformanceProbe: vi.fn(),
   isTauriEnvironment: vi.fn(() => true),
+  listTerminals: vi.fn(),
   listenProjectRefresh: vi.fn().mockResolvedValue(unlisten),
   listenTerminalOutput: vi.fn().mockResolvedValue(unlisten),
   listenTerminalState: vi.fn().mockResolvedValue(unlisten),
   readFilePreview: vi.fn(),
+  readPerformanceProbeState: vi.fn().mockResolvedValue({
+    enabled: false,
+    processUptimeMs: 0,
+    scenario: null,
+  }),
+  readProjectWorkspace: vi.fn(),
   refreshProjectSnapshot: vi.fn(),
   removeProject: vi.fn(),
   resizeTerminal: vi.fn(),
+  saveProjectWorkspace: vi.fn(),
   writeTerminal: vi.fn(),
 }))
 
@@ -43,6 +52,7 @@ describe('App', () => {
       selectedFilePath: null,
       snapshot: null,
       terminalProjectStateByProject: {},
+      workspaceStateByProject: {},
     })
   })
 

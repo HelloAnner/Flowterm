@@ -1,7 +1,10 @@
-.PHONY: install test build start
+.PHONY: deps install test build start
+
+deps:
+	pnpm install
 
 install:
-	pnpm install
+	node ./scripts/install-macos-app.mjs
 
 test:
 	pnpm test

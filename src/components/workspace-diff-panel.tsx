@@ -6,11 +6,18 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Activity, Eye } from 'lucide-react'
+import { Activity, Copy, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 
 import { ScrollArea } from './ui/scroll-area'
 import { resolvePreviewRequestWindow, createImageViewportState, zoomImageViewport } from '../features/workspace/preview-window'
+import {
+  resolveCodeFenceSyntax,
+  resolvePreviewSyntax,
+  type PreviewSyntax,
+  warmSyntaxTheme,
+} from '../features/workspace/preview-syntax'
 import { cn } from '../lib/utils'
 import type { FilePreview, GitStatusCode, LiveStatus } from '../lib/contracts'
 
@@ -28,6 +35,10 @@ export function WorkspaceDiffPanel({
   selectedFilePath,
 }: WorkspaceDiffPanelProps): ReactElement {
   const deferredPreview = useDeferredValue(preview)
+  const syntax = useMemo(
+    () => (deferredPreview ? resolvePreviewSyntax(deferredPreview.path) : null),
+    [deferredPreview],
+  )
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-base)]">
@@ -46,22 +57,29 @@ export function WorkspaceDiffPanel({
             <Eye className="h-3 w-3" />
             工作区预览
           </span>
+          {deferredPreview ? <SyntaxBadge preview={deferredPreview} syntax={syntax} /> : null}
           {deferredPreview ? (
             <StatusBadge
               gitStatus={deferredPreview.gitStatus}
               liveStatus={deferredPreview.liveStatus}
+              previewPath={deferredPreview.path}
             />
           ) : null}
         </div>
       </div>
       {deferredPreview ? (
         deferredPreview.mode === 'image' ? (
-          <ImagePreview preview={deferredPreview} />
-        ) : deferredPreview.path.endsWith('.md') &&
+          <ImagePreview key={deferredPreview.path} preview={deferredPreview} />
+        ) : syntax?.isMarkdown &&
           deferredPreview.totalLines === deferredPreview.lines.length ? (
           <MarkdownPreview preview={deferredPreview} />
         ) : (
-          <VirtualizedPreview onRequestWindow={onRequestWindow} preview={deferredPreview} />
+          <VirtualizedPreview
+            key={deferredPreview.path}
+            onRequestWindow={onRequestWindow}
+            preview={deferredPreview}
+            syntax={syntax ?? resolvePreviewSyntax(deferredPreview.path)}
+          />
         )
       ) : (
         <ScrollArea className="min-h-0 flex-1">
@@ -96,11 +114,6 @@ function ImagePreview({
     startOffsetX: number
     startOffsetY: number
   } | null>(null)
-
-  useEffect(() => {
-    setHasDecodeError(false)
-    setViewport(createImageViewportState())
-  }, [preview.imageDataUrl, preview.path])
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -193,9 +206,11 @@ function ImagePreview({
 function VirtualizedPreview({
   onRequestWindow,
   preview,
+  syntax,
 }: {
   onRequestWindow: (startLine: number, lineCount: number) => void
   preview: FilePreview
+  syntax: PreviewSyntax
 }): ReactElement {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -236,17 +251,6 @@ function VirtualizedPreview({
       viewport.removeEventListener('scroll', syncScroll)
       resizeObserver.disconnect()
     }
-  }, [preview.path])
-
-  useEffect(() => {
-    const viewport = viewportRef.current
-
-    if (!viewport) {
-      return
-    }
-
-    viewport.scrollTo({ top: 0 })
-    setScrollTop(0)
   }, [preview.path])
 
   useEffect(() => {
@@ -317,9 +321,13 @@ function VirtualizedPreview({
                   number={line.newLineNumber}
                   tone={line.kind === 'added' ? 'added' : 'default'}
                 />
-                <pre className="overflow-x-auto px-4 py-0 text-[var(--text-primary)]">
-                  {line.content}
-                </pre>
+                {line.kind === 'hunk' ? (
+                  <pre className="overflow-x-auto px-4 py-0 text-[var(--accent-glow)]">
+                    {line.content}
+                  </pre>
+                ) : (
+                  <CodeLine content={line.content} syntax={syntax} />
+                )}
               </div>
             ) : (
               <div
@@ -327,9 +335,7 @@ function VirtualizedPreview({
                 key={`${preview.path}-${index}`}
               >
                 <LineNumberCell number={line.newLineNumber} tone="default" />
-                <pre className="overflow-x-auto px-4 py-0 text-[var(--text-primary)]">
-                  {line.content}
-                </pre>
+                <CodeLine content={line.content} syntax={syntax} />
               </div>
             ),
           )}
@@ -342,11 +348,30 @@ function VirtualizedPreview({
 function StatusBadge({
   gitStatus,
   liveStatus,
+  previewPath,
 }: {
   gitStatus: GitStatusCode
   liveStatus: LiveStatus
+  previewPath: string
 }): ReactElement {
   const label = resolveStatusCopy(gitStatus, liveStatus)
+  const isSynced = gitStatus === ' ' && liveStatus === 'idle'
+
+  if (isSynced) {
+    return (
+      <button
+        aria-label="复制相对路径"
+        className="inline-flex items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
+        onClick={() => {
+          void window.navigator.clipboard?.writeText(previewPath)
+        }}
+        title="复制相对路径"
+        type="button"
+      >
+        <Copy className="h-3 w-3" />
+      </button>
+    )
+  }
 
   return (
     <span
@@ -392,10 +417,88 @@ function MarkdownPreview({ preview }: { preview: FilePreview }): ReactElement {
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="md-prose px-8 py-6">
-        <ReactMarkdown>{content}</ReactMarkdown>
+        <ReactMarkdown
+          components={{
+            code({ children, className }) {
+              const languageMatch = /language-([A-Za-z0-9_+-]+)/.exec(className ?? '')
+
+              if (!languageMatch) {
+                return <code>{children}</code>
+              }
+
+              const syntax = resolveCodeFenceSyntax(languageMatch[1])
+
+              if (syntax.isPlainText) {
+                return <code>{children}</code>
+              }
+
+              return (
+                <SyntaxHighlighter
+                  customStyle={syntaxHighlighterStyle}
+                  language={syntax.language}
+                  PreTag="div"
+                  style={warmSyntaxTheme}
+                  wrapLongLines
+                >
+                  {String(children).replace(/\n$/, '')}
+                </SyntaxHighlighter>
+              )
+            },
+          }}
+        >
+          {content}
+        </ReactMarkdown>
       </div>
     </ScrollArea>
   )
+}
+
+function SyntaxBadge({
+  preview,
+  syntax,
+}: {
+  preview: FilePreview
+  syntax: PreviewSyntax | null
+}): ReactElement {
+  const label = preview.mode === 'image' ? 'Image' : (syntax?.label ?? 'Plain Text')
+
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(123,167,200,0.18)] bg-[rgba(123,167,200,0.08)] px-2 py-1 text-[var(--accent-glow)]">
+      {label}
+    </span>
+  )
+}
+
+function CodeLine({
+  content,
+  syntax,
+}: {
+  content: string
+  syntax: PreviewSyntax
+}): ReactElement {
+  if (syntax.isPlainText) {
+    return <pre className="overflow-x-auto px-4 py-0 text-[var(--text-primary)]">{content}</pre>
+  }
+
+  return (
+    <SyntaxHighlighter
+      CodeTag="span"
+      customStyle={syntaxHighlighterStyle}
+      language={syntax.language}
+      PreTag="div"
+      style={warmSyntaxTheme}
+      wrapLongLines
+    >
+      {content.length > 0 ? content : ' '}
+    </SyntaxHighlighter>
+  )
+}
+
+const syntaxHighlighterStyle = {
+  background: 'transparent',
+  margin: 0,
+  overflow: 'visible',
+  padding: '0 1rem',
 }
 
 function resolveStatusCopy(
