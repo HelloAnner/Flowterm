@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import type {
-  TerminalAttachment,
-  TerminalOutputEvent,
-  TerminalStateEvent,
-} from '../../lib/contracts'
+import type { TerminalAttachment, TerminalStateEvent } from '../../lib/contracts'
 import {
   applyTerminalAttachment,
-  appendTerminalChunk,
   buildTerminalPaneDescriptors,
   removeTerminalPane,
   type TerminalProjectState,
@@ -52,13 +47,7 @@ describe('terminal pane state', () => {
     })
   })
 
-  it('appends output and state changes only to the matching pane', () => {
-    const outputEvent: TerminalOutputEvent = {
-      chunk: 'src/components/workspace-terminal.tsx\n',
-      paneId: 'pane-split',
-      projectId: 'project-a',
-      sessionId: 'session-split',
-    }
+  it('applies state changes only to the matching pane', () => {
     const stateEvent: TerminalStateEvent = {
       paneId: 'pane-split',
       projectId: 'project-a',
@@ -67,24 +56,19 @@ describe('terminal pane state', () => {
     }
 
     const state = updateTerminalState(
-      appendTerminalChunk(
-        applyTerminalAttachment(
-          applyTerminalAttachment(createProjectState(), primaryAttachment),
-          splitAttachment,
-        ),
-        outputEvent,
+      applyTerminalAttachment(
+        applyTerminalAttachment(createProjectState(), primaryAttachment),
+        splitAttachment,
       ),
       stateEvent,
     )
 
     expect(state.panesById['pane-main']).toMatchObject({
       history: '$ pwd\n/Users/anner/Flowterm\n',
-      lastChunk: null,
       state: 'idle',
     })
     expect(state.panesById['pane-split']).toMatchObject({
-      history: '$ git status --short\n M src/App.tsx\nsrc/components/workspace-terminal.tsx\n',
-      lastChunk: 'src/components/workspace-terminal.tsx\n',
+      history: '$ git status --short\n M src/App.tsx\n',
       state: 'attention',
     })
   })
@@ -99,7 +83,6 @@ describe('terminal pane state', () => {
       {
         history: '$ pwd\n/Users/anner/Flowterm\n',
         id: 'pane-main',
-        lastChunk: null,
         projectId: 'project-a',
         sessionId: 'session-main',
         shellLabel: 'zsh',
@@ -108,7 +91,6 @@ describe('terminal pane state', () => {
       {
         history: '$ git status --short\n M src/App.tsx\n',
         id: 'pane-split',
-        lastChunk: null,
         projectId: 'project-a',
         sessionId: 'session-split',
         shellLabel: 'zsh',

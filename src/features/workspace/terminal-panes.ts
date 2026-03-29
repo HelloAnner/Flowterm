@@ -1,6 +1,5 @@
 import type {
   TerminalAttachment,
-  TerminalOutputEvent,
   TerminalState,
   TerminalStateEvent,
 } from '../../lib/contracts'
@@ -8,7 +7,6 @@ import type { TerminalPaneDescriptor } from '../../components/workspace-terminal
 
 export interface TerminalPaneState {
   history: string
-  lastChunk: string | null
   paneId: string
   projectId: string
   sessionId: string
@@ -40,36 +38,11 @@ export function applyTerminalAttachment(
       ...state.panesById,
       [attachment.paneId]: {
         history: attachment.history,
-        lastChunk: pane?.lastChunk ?? null,
         paneId: attachment.paneId,
         projectId: attachment.projectId,
         sessionId: attachment.sessionId,
         shellLabel: attachment.shellLabel,
         state: attachment.state,
-      },
-    },
-  }
-}
-
-export function appendTerminalChunk(
-  state: TerminalProjectState,
-  event: TerminalOutputEvent,
-): TerminalProjectState {
-  const pane = state.panesById[event.paneId]
-
-  if (!pane || pane.sessionId !== event.sessionId) {
-    return state
-  }
-
-  return {
-    ...state,
-    panesById: {
-      ...state.panesById,
-      [event.paneId]: {
-        ...pane,
-        history: `${pane.history}${event.chunk}`,
-        lastChunk: event.chunk,
-        state: 'running',
       },
     },
   }
@@ -123,7 +96,6 @@ export function buildTerminalPaneDescriptors(
     .map((pane) => ({
       history: pane.history,
       id: pane.paneId,
-      lastChunk: pane.lastChunk,
       projectId: pane.projectId,
       sessionId: pane.sessionId,
       shellLabel: pane.shellLabel,

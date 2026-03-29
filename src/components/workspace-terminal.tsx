@@ -13,7 +13,6 @@ import type { TerminalState } from '../lib/contracts'
 export interface TerminalPaneDescriptor {
   id: string
   history: string
-  lastChunk: string | null
   projectId: string
   sessionId: string
   shellLabel: string
