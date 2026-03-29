@@ -26,8 +26,6 @@ pub struct ProjectSummary {
 pub struct ProjectSnapshot {
     pub project: ProjectSummary,
     pub files: Vec<ProjectFileEntry>,
-    pub live_diffs: Vec<FileDiff>,
-    pub git_diffs: Vec<FileDiff>,
     pub backend: String,
 }
 
@@ -42,10 +40,23 @@ pub struct ProjectFileEntry {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FileDiff {
+pub struct FilePreview {
     pub path: String,
-    pub change_type: DiffChangeType,
+    pub mode: FilePreviewMode,
+    pub git_status: char,
+    pub live_status: LiveStatus,
+    pub image_data_url: Option<String>,
+    pub start_line: usize,
+    pub total_lines: usize,
     pub lines: Vec<DiffLine>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilePreviewMode {
+    Diff,
+    Image,
+    Text,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,7 +72,9 @@ pub struct DiffLine {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachment {
     pub history: String,
+    pub pane_id: String,
     pub project_id: String,
+    pub session_id: String,
     pub shell_label: String,
     pub state: TerminalState,
 }
@@ -86,15 +99,6 @@ pub enum LiveStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum DiffChangeType {
-    Added,
-    Deleted,
-    Modified,
-    Untracked,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum DiffLineKind {
     Added,
     Context,
@@ -111,14 +115,18 @@ pub struct ProjectRefreshEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOutputEvent {
+    pub pane_id: String,
     pub project_id: String,
+    pub session_id: String,
     pub chunk: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalStateEvent {
+    pub pane_id: String,
     pub project_id: String,
+    pub session_id: String,
     pub state: TerminalState,
 }
 

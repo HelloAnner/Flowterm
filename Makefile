@@ -11,4 +11,5 @@ build:
 	pnpm build
 
 start:
+	node ./scripts/ensure-frontend-deps.mjs
 	pnpm start

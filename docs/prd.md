@@ -116,32 +116,24 @@ Vibe Coding 平台正在分化为两类：
 **功能：**
 - 展示当前项目的目录结构，类似 VS Code 的 Explorer
 - 高亮显示被 Agent 改动过的文件（红色 = 删除，绿色 = 新增，黄色 = 修改）
-- 点击文件名，在中间 Diff 面板中打开该文件的 Diff 视图
+- 点击文件名，在中间工作区预览面板中打开该文件的只读预览
 - 支持折叠/展开，自动忽略 `node_modules`、`.git` 等常见目录（可配置）
 - 显示文件的 git 状态标识（M / A / D / ?）
 
 ---
 
-### 5.4 中间：Diff 面板
+### 5.4 中间：工作区预览面板
 
 **这是产品最核心的差异化能力。**
 
-**两种模式，可随时切换：**
-
-#### 模式 A：实时文件监听（默认）
+**单一模式，统一展示当前工作区文件：**
 - 监听项目目录下所有文件变更（FSEvents / inotify）
-- Agent 每次写文件，Diff 面板立刻展示改动内容
-- 采用 side-by-side 或 unified diff 两种视图可选
-- 文件变更历史记录在当前 session 内（时间线形式）
+- 点击文件后始终展示该文件的当前内容
+- 文件有未提交改动时，使用 unified diff 风格渲染
+- 文件没有改动时，展示全文只读预览
+- watcher 触发后只刷新当前文件预览，不全量重算所有文件 diff
 
-#### 模式 B：Git Diff 视图
-- 展示工作区相对于上一次 commit 的全量改动
-- 支持按文件筛选、按改动类型筛选
-- 一键 stage / unstage（不内置完整 git UI，但提供快捷操作）
-
-**切换方式：** 面板顶部 Toggle 按钮，快捷键 `Cmd+Shift+D`
-
-**Diff 渲染：** 使用语法高亮，支持主流语言。不做 inline 编辑——Diff 面板是只读的，编辑依然交给 Agent。
+**预览渲染：** 使用只读语法化文本排版与 Git 风格行号。大文件采用虚拟滚动，保证几千行文件依然丝滑浏览。不做 inline 编辑，编辑依然交给 Agent。
 
 ---
 
@@ -177,7 +169,8 @@ libghostty 后端    xterm.js 后端
 ```
 
 **功能：**
-- 每个项目 Tab 维护独立的终端 session（切换 Tab 时终端进程保活，不销毁）
+- 每个项目 Tab 至少维护一个独立的终端 session，切换 Tab 时进程保活，不销毁
+- 终端区域内每个拆分 pane 都是独立 shell：独立 PTY、独立 cwd、独立 history、独立输入输出流
 - 支持在终端区域内垂直分割（运行多个 Agent 或同时看日志）
 - Agent 运行时状态可视化：检测 Claude Code / aider 的输出模式，在终端顶部显示简洁状态条（运行中 / 等待输入 / 完成）
 
@@ -233,13 +226,13 @@ Rust 后端
 
 **关键技术点：libghostty 与 Tauri WebView 共存**
 
-Tauri 的主窗口是一个 WKWebView。libghostty 渲染的 Metal 视图以 `NSView` 形式创建，通过 `addSubview` 叠加在 WKWebView 之上，布局坐标由 Rust/Swift 层负责同步（响应 Tauri 的窗口 resize 事件）。React 侧只负责渲染文件树、Diff 面板、Tab 栏等 UI 元素，终端区域留白由 Swift 层填充。
+Tauri 的主窗口是一个 WKWebView。libghostty 渲染的 Metal 视图以 `NSView` 形式创建，通过 `addSubview` 叠加在 WKWebView 之上，布局坐标由 Rust/Swift 层负责同步（响应 Tauri 的窗口 resize 事件）。React 侧只负责渲染文件树、工作区预览面板、Tab 栏等 UI 元素，终端区域留白由 Swift 层填充。
 
 ### 6.3 性能目标
 
 - 启动时间 < 500ms（冷启动）
 - 内存占用 < 150MB（空载，3 个项目 Tab）
-- Diff 面板刷新延迟 < 100ms（文件变更到 UI 更新）
+- 当前文件预览刷新延迟 < 100ms（文件变更到 UI 更新）
 - 终端输入延迟 < 5ms（击键到显示）
 
 ---
@@ -250,8 +243,8 @@ Tauri 的主窗口是一个 WKWebView。libghostty 渲染的 Metal 视图以 `NS
 
 - [ ] 顶部项目 Tab 栏（添加、切换、重命名、删除项目）
 - [ ] 左侧文件树（展示目录结构，高亮改动文件）
-- [ ] 中间 Diff 面板（实时文件监听模式 + Git diff 模式，可切换）
-- [ ] 右侧终端（完整终端功能，项目切换时 session 保活）
+- [ ] 中间工作区预览面板（工作区单模式，按需读取当前文件）
+- [ ] 右侧终端（完整终端功能，项目切换时 session 保活，分屏 pane 相互独立）
 - [ ] 三栏宽度可拖拽调整
 - [ ] 项目状态持久化（重启恢复）
 

@@ -113,13 +113,15 @@ function TreeRow({
     )
   }
 
+  const isSelected = selectedFilePath === node.path
+  const fileColor = resolveFileColor(node.gitStatus, isSelected)
+
   return (
     <button
       className={cn(
         'relative flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors',
-        selectedFilePath === node.path
-          ? 'bg-[var(--bg-overlay)] text-[var(--text-primary)]'
-          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]',
+        isSelected ? 'bg-[var(--bg-overlay)]' : 'hover:bg-[var(--bg-overlay)]',
+        fileColor,
       )}
       onClick={() => onSelectFile(node.path)}
       type="button"
@@ -130,9 +132,7 @@ function TreeRow({
       <FileCode2 className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate">{node.name}</span>
       {statusLabel ? (
-        <span className={cn('ml-auto text-[11px]', resolveStatusColor(statusLabel))}>
-          {statusLabel}
-        </span>
+        <span className="ml-auto text-[11px] opacity-50">{statusLabel}</span>
       ) : null}
     </button>
   )
@@ -145,15 +145,24 @@ function resolveStatusLabel(node: FileTreeNode): string | null {
   return node.gitStatus
 }
 
-function resolveStatusColor(label: string): string {
-  if (label === 'A') {
-    return 'text-[var(--accent-sage)]'
+function resolveFileColor(
+  gitStatus: string | null | undefined,
+  isSelected: boolean,
+): string {
+  if (isSelected) {
+    return 'text-[var(--text-primary)]'
   }
-  if (label === 'D') {
-    return 'text-[var(--accent-clay)]'
+  if (gitStatus === 'A') {
+    return 'text-[var(--accent-sage)] hover:text-[var(--accent-sage)]'
   }
-  if (label === '?') {
-    return 'text-[var(--text-muted)]'
+  if (gitStatus === 'D') {
+    return 'text-[var(--accent-clay)] hover:text-[var(--accent-clay)]'
   }
-  return 'text-[var(--accent-amber)]'
+  if (gitStatus === 'M') {
+    return 'text-[var(--accent-amber)] hover:text-[var(--accent-amber)]'
+  }
+  if (gitStatus === '?') {
+    return 'text-[var(--accent-sage)] opacity-70 hover:opacity-100 hover:text-[var(--accent-sage)]'
+  }
+  return 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
 }

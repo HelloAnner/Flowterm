@@ -1,0 +1,85 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Warm dark background gradient -->
+    <radialGradient id="bgGrad" cx="40%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#2B2218"/>
+      <stop offset="100%" stop-color="#110E0C"/>
+    </radialGradient>
+
+    <!-- Amber symbol gradient -->
+    <linearGradient id="symbolGrad" x1="0%" y1="20%" x2="100%" y2="80%">
+      <stop offset="0%" stop-color="#F2C06A"/>
+      <stop offset="60%" stop-color="#D98B44"/>
+      <stop offset="100%" stop-color="#B8622A"/>
+    </linearGradient>
+
+    <!-- Soft glow filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Clip to rounded rect -->
+    <clipPath id="roundedClip">
+      <rect width="1024" height="1024" rx="224" ry="224"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bgGrad)"/>
+
+  <!-- Subtle warm texture: top-left warmth -->
+  <radialGradient id="warmSpot" cx="25%" cy="20%" r="50%">
+    <stop offset="0%" stop-color="#3A2A18" stop-opacity="0.6"/>
+    <stop offset="100%" stop-color="#110E0C" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#warmSpot)"/>
+
+  <!-- Symbol group: >~ centered slightly left-of-center -->
+  <!-- > prompt arrow: two strokes meeting at a sharp point -->
+  <g filter="url(#glow)" opacity="0.3">
+    <path d="M 248 342 L 446 512 L 248 682"
+          stroke="#E8A050" stroke-width="88"
+          stroke-linecap="round" stroke-linejoin="round"
+          fill="none"/>
+    <!-- tilde wave -->
+    <path d="M 508 478
+             C 548 430, 598 430, 638 460
+             C 678 490, 728 490, 776 445"
+          stroke="#E8A050" stroke-width="72"
+          stroke-linecap="round" stroke-linejoin="round"
+          fill="none"/>
+    <path d="M 508 544
+             C 548 496, 598 496, 638 526
+             C 678 556, 728 556, 776 511"
+          stroke="#E8A050" stroke-width="72"
+          stroke-linecap="round" stroke-linejoin="round"
+          fill="none"/>
+  </g>
+
+  <!-- Main symbol (crisp layer on top) -->
+  <!-- > arrow -->
+  <path d="M 248 342 L 446 512 L 248 682"
+        stroke="url(#symbolGrad)" stroke-width="76"
+        stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+
+  <!-- ~ tilde / wave (two humps) -->
+  <!-- Upper hump of tilde -->
+  <path d="M 508 478
+           C 548 430, 598 430, 638 460
+           C 678 490, 728 490, 776 445"
+        stroke="url(#symbolGrad)" stroke-width="64"
+        stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+  <!-- Lower curve connecting the two humps -->
+  <path d="M 508 544
+           C 548 496, 598 496, 638 526
+           C 678 556, 728 556, 776 511"
+        stroke="url(#symbolGrad)" stroke-width="64"
+        stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+
+  <!-- Trailing flow dot: blinking cursor feel -->
+  <circle cx="826" cy="512" r="38" fill="url(#symbolGrad)" opacity="0.75"/>
+</svg>

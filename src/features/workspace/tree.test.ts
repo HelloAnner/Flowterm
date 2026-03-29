@@ -58,6 +58,7 @@ describe('summarizeProjectSnapshot', () => {
   it('counts changed files and untracked files for tab indicators', () => {
     const summary = summarizeProjectSnapshot(projectFiles)
 
+    expect(summary.totalFileCount).toBe(4)
     expect(summary.changedFileCount).toBe(3)
     expect(summary.untrackedFileCount).toBe(1)
     expect(summary.hasLiveActivity).toBe(true)

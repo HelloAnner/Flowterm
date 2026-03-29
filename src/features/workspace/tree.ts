@@ -13,6 +13,7 @@ export interface FileTreeNode {
 }
 
 export interface ProjectSnapshotSummary {
+  totalFileCount: number
   changedFileCount: number
   untrackedFileCount: number
   hasLiveActivity: boolean
@@ -32,6 +33,7 @@ export function summarizeProjectSnapshot(
   files: ProjectFileEntry[],
 ): ProjectSnapshotSummary {
   return {
+    totalFileCount: files.length,
     changedFileCount: files.filter((file) => file.gitStatus !== ' ').length,
     untrackedFileCount: files.filter((file) => file.gitStatus === '?').length,
     hasLiveActivity: files.some((file) => file.liveStatus !== 'idle'),

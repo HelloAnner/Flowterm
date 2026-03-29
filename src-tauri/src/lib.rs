@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use git::scan_project;
-use models::{AppBootstrap, ProjectSnapshot, ProjectSummary};
+use models::{AppBootstrap, FilePreview, ProjectSnapshot, ProjectSummary};
 use state::FlowtermState;
 use tauri::{AppHandle, Manager, State};
 
@@ -48,6 +48,11 @@ fn remove_project(
     project_id: String,
 ) -> Result<AppBootstrap, String> {
     with_error_handling(|| {
+        {
+            let mut terminals = state.terminals.lock().unwrap();
+            terminals.remove_project(&project_id);
+        }
+
         {
             let mut registry = state.registry.lock().unwrap();
             registry.remove_project(&project_id)?;
@@ -95,10 +100,41 @@ fn refresh_project_snapshot(
 }
 
 #[tauri::command]
+fn read_file_preview(
+    state: State<FlowtermState>,
+    project_id: String,
+    path: String,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
+) -> Result<FilePreview, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+        let live_files = {
+            let registry = state.registry.lock().unwrap();
+            registry.live_files_for(&project_id)
+        };
+
+        git::build_file_preview_with_options(
+            &PathBuf::from(project.path),
+            &path,
+            &live_files,
+            start_line,
+            line_count,
+        )
+    })
+}
+
+#[tauri::command]
 fn attach_terminal(
     app: AppHandle,
     state: State<FlowtermState>,
     project_id: String,
+    pane_id: Option<String>,
 ) -> Result<models::TerminalAttachment, String> {
     with_error_handling(|| {
         let project = {
@@ -109,32 +145,41 @@ fn attach_terminal(
         };
 
         let mut terminals = state.terminals.lock().unwrap();
-        terminals.attach_or_create(app, &project.id, &PathBuf::from(project.path))
+        terminals.attach_or_create(app, &project.id, &PathBuf::from(project.path), pane_id.as_deref())
     })
 }
 
 #[tauri::command]
 fn write_terminal(
     state: State<FlowtermState>,
-    project_id: String,
+    session_id: String,
     data: String,
 ) -> Result<(), String> {
     with_error_handling(|| {
         let mut terminals = state.terminals.lock().unwrap();
-        terminals.write(&project_id, &data)
+        terminals.write(&session_id, &data)
     })
 }
 
 #[tauri::command]
 fn resize_terminal(
     state: State<FlowtermState>,
-    project_id: String,
+    session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
     with_error_handling(|| {
         let mut terminals = state.terminals.lock().unwrap();
-        terminals.resize(&project_id, cols, rows)
+        terminals.resize(&session_id, cols, rows)
+    })
+}
+
+#[tauri::command]
+fn close_terminal(state: State<FlowtermState>, session_id: String) -> Result<(), String> {
+    with_error_handling(|| {
+        let mut terminals = state.terminals.lock().unwrap();
+        terminals.close(&session_id);
+        Ok(())
     })
 }
 
@@ -162,6 +207,8 @@ pub fn run() {
             add_project,
             attach_terminal,
             bootstrap_app,
+            close_terminal,
+            read_file_preview,
             refresh_project_snapshot,
             remove_project,
             resize_terminal,
@@ -189,7 +236,7 @@ fn build_bootstrap(app: &AppHandle, state: &State<FlowtermState>) -> Result<AppB
         .as_ref()
         .map(|project| {
             let mut terminals = state.terminals.lock().unwrap();
-            terminals.attach_or_create(app.clone(), &project.id, &PathBuf::from(&project.path))
+            terminals.attach_or_create(app.clone(), &project.id, &PathBuf::from(&project.path), None)
         })
         .transpose()?;
     let projects = collect_project_summaries(state)?;
@@ -214,7 +261,7 @@ fn build_snapshot(state: &State<FlowtermState>, project: &models::ProjectRecord)
     let scan = scan_project(&PathBuf::from(&project.path), &live_files)?;
     let terminal_state = {
         let terminals = state.terminals.lock().unwrap();
-        terminals.state_for(&project.id)
+        terminals.state_for_project(&project.id)
     };
     let summary = ProjectSummary {
         changed_file_count: scan.changed_file_count,
@@ -229,8 +276,6 @@ fn build_snapshot(state: &State<FlowtermState>, project: &models::ProjectRecord)
     Ok(ProjectSnapshot {
         backend: "xterm".to_string(),
         files: scan.files,
-        git_diffs: scan.diffs.clone(),
-        live_diffs: scan.diffs,
         project: summary,
     })
 }
@@ -250,7 +295,7 @@ fn collect_project_summaries(state: &State<FlowtermState>) -> Result<Vec<Project
         let scan = scan_project(&PathBuf::from(&project.path), &live_files)?;
         let terminal_state = {
             let terminals = state.terminals.lock().unwrap();
-            terminals.state_for(&project.id)
+            terminals.state_for_project(&project.id)
         };
 
         summaries.push(ProjectSummary {

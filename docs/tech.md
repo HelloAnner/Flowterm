@@ -32,7 +32,7 @@ Flowterm 是一款 **Tauri 2.0** 桌面应用，采用前后端分离 + Rust 原
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**核心原则：** React 负责所有 Chrome UI（Tab 栏、文件树、Diff 面板），终端区域在 WebView 中留白，由 Swift/Metal 原生层填充。两层通过 Rust 协调布局。
+**核心原则：** React 负责所有 Chrome UI（Tab 栏、文件树、工作区预览面板），终端区域在 WebView 中留白，由 Swift/Metal 原生层填充。两层通过 Rust 协调布局。
 
 ---
 
@@ -90,13 +90,13 @@ src/
 ├── components/
 │   ├── tab-bar/            # 顶部项目 Tab 栏
 │   ├── file-tree/          # 左侧文件树面板
-│   ├── diff-panel/         # 中间 Diff 面板
+│   ├── preview-panel/      # 中间工作区预览面板
 │   ├── terminal-area/      # 终端区域占位 & 状态条
 │   └── ui/                 # 原子 UI 组件（Button, Badge, Toggle...）
 ├── stores/
 │   ├── project.store.ts    # 项目列表、当前激活 Tab
 │   ├── file.store.ts       # 文件树状态、变更高亮
-│   ├── diff.store.ts       # Diff 数据、模式（实时/Git）
+│   ├── preview.store.ts    # 当前文件预览状态
 │   └── terminal.store.ts   # Agent 状态、分屏布局
 ├── hooks/
 │   ├── useTauriEvents.ts   # 统一监听 Tauri 后端事件
@@ -121,7 +121,7 @@ src/
 │ active tab: bg #161616, border-bottom: 2px #C8A96E (amber)            │
 └────────────────────────────────────────────────────────────────────────┘
 ┌────────────────────────────── Content Area (fill) ────────────────────┐
-│ ┌─ File Tree ──┐ ┌─── Diff Panel ────────────┐ ┌── Terminal ────────┐ │
+│ ┌─ File Tree ──┐ ┌─── Preview Panel ─────────┐ ┌── Terminal ────────┐ │
 │ │  w: 220px    │ │  w: fill_container         │ │  w: 430px          │ │
 │ │  bg: #161616 │ │  bg: #0F0F0F               │ │  bg: #0C0C0C       │ │
 │ │  右边框: 1px  │ │  右边框: 1px #2A2A2A       │ │                    │ │
@@ -226,7 +226,7 @@ src-tauri/src/
 
 ### 4.2 PTY 管理
 
-每个项目 Tab 持有一个独立的 PTY session（通过 `portable-pty` 创建），切换 Tab 时进程保活：
+每个项目 Tab 默认持有一个主 PTY session；终端分屏后，每个 pane 都持有自己的 PTY session（通过 `portable-pty` 创建），切换 Tab 时这些进程统一保活：
 
 ```rust
 pub struct PtySession {
@@ -463,9 +463,10 @@ interface DiffStore {
 
 // terminal.store.ts
 interface TerminalStore {
-  sessions: Record<string, TerminalSession>   // projectId → session
-  agentStatus: Record<string, AgentStatus>    // projectId → status
-  splitCount: Record<string, number>          // projectId → 分屏数（1-3）
+  sessions: Record<string, TerminalSession>   // sessionId → session
+  agentStatus: Record<string, AgentStatus>    // projectId → 聚合状态
+  paneOrderByProject: Record<string, string[]> // projectId → paneId[]
+  paneStateByProject: Record<string, Record<string, TerminalPaneState>>
 }
 ```
 
@@ -520,7 +521,7 @@ PTY 进程在切换时 **不销毁**，保持在后台运行。
 终端区域支持垂直分割，最多 3 个 pane（来自 Multi Terminal 设计帧）：
 
 ```
-每个 pane = 独立 PTY session + 独立 libghostty surface
+每个 pane = 独立 PTY session + 独立 shell 进程 + 独立 cwd/history + 独立 libghostty surface
 pane 间分隔线：4px，bg #0A0A0A，上下 1px border #222222
 分屏状态存储在 terminal_sessions.layout 字段（JSON）
 ```

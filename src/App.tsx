@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect } from 'react'
+import { type ReactElement, useEffect, useEffectEvent, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import {
   Panel,
@@ -9,8 +9,17 @@ import {
 import { AddProjectDialog } from './components/add-project-dialog'
 import { WorkspaceDiffPanel } from './components/workspace-diff-panel'
 import { WorkspaceFileTree } from './components/workspace-file-tree'
+import {
+  WorkspaceSidebar,
+  type WorkspaceSidebarView,
+} from './components/workspace-sidebar'
 import { WorkspaceTabBar } from './components/workspace-tab-bar'
 import { WorkspaceTerminal } from './components/workspace-terminal'
+import {
+  buildTerminalPaneDescriptors,
+  createTerminalProjectState,
+} from './features/workspace/terminal-panes'
+import { publishTerminalOutput } from './features/workspace/terminal-stream'
 import {
   isTauriEnvironment,
   listenProjectRefresh,
@@ -19,37 +28,40 @@ import {
 } from './lib/tauri'
 import { useWorkspaceStore } from './stores/workspace-store'
 
+const EMPTY_TERMINAL_PROJECT_STATE = createTerminalProjectState()
+
 function App(): ReactElement {
+  const [workspaceSidebarView, setWorkspaceSidebarView] =
+    useState<WorkspaceSidebarView>('tree')
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId)
   const bootstrap = useWorkspaceStore((state) => state.bootstrap)
-  const diffMode = useWorkspaceStore((state) => state.diffMode)
   const error = useWorkspaceStore((state) => state.error)
+  const filePreview = useWorkspaceStore((state) => state.filePreview)
   const isBooting = useWorkspaceStore((state) => state.isBooting)
-  const lastTerminalEvent = useWorkspaceStore((state) => state.lastTerminalEvent)
+  const isFilePreviewLoading = useWorkspaceStore((state) => state.isFilePreviewLoading)
   const openProjectDialog = useWorkspaceStore((state) => state.openProjectDialog)
   const projects = useWorkspaceStore((state) => state.projects)
+  const fetchFilePreview = useWorkspaceStore((state) => state.fetchFilePreview)
   const refreshActiveProject = useWorkspaceStore((state) => state.refreshActiveProject)
   const removeProject = useWorkspaceStore((state) => state.removeProject)
   const selectFile = useWorkspaceStore((state) => state.selectFile)
   const selectedFilePath = useWorkspaceStore((state) => state.selectedFilePath)
   const selectProject = useWorkspaceStore((state) => state.selectProject)
-  const setDiffMode = useWorkspaceStore((state) => state.setDiffMode)
   const snapshot = useWorkspaceStore((state) => state.snapshot)
-  const appendTerminalChunk = useWorkspaceStore((state) => state.appendTerminalChunk)
+  const addTerminalPane = useWorkspaceStore((state) => state.addTerminalPane)
+  const removeTerminalPane = useWorkspaceStore((state) => state.removeTerminalPane)
   const resizeTerminal = useWorkspaceStore((state) => state.resizeTerminal)
-  const terminalHistory = useWorkspaceStore(
-    (state) => (activeProjectId ? state.terminalHistoryByProject[activeProjectId] : '') ?? '',
-  )
-  const terminalShellLabel = useWorkspaceStore(
+  const terminalProjectStateForActiveProject = useWorkspaceStore(
     (state) =>
-      (activeProjectId ? state.terminalShellLabelByProject[activeProjectId] : '') ??
-      'shell',
+      (activeProjectId ? state.terminalProjectStateByProject[activeProjectId] : null) ?? null,
   )
-  const terminalState = useWorkspaceStore(
-    (state) => (activeProjectId ? state.terminalStateByProject[activeProjectId] : 'idle') ?? 'idle',
-  )
+  const terminalProjectState =
+    terminalProjectStateForActiveProject ?? EMPTY_TERMINAL_PROJECT_STATE
   const updateTerminalState = useWorkspaceStore((state) => state.updateTerminalState)
   const writeTerminal = useWorkspaceStore((state) => state.writeTerminal)
+  const requestPreviewWindow = useEffectEvent((startLine: number, lineCount: number) => {
+    void fetchFilePreview(activeProjectId, selectedFilePath, { lineCount, startLine })
+  })
 
   useEffect(() => {
     void bootstrap()
@@ -73,7 +85,7 @@ function App(): ReactElement {
       })
       unlistenTerminalOutput = await listenTerminalOutput((event) => {
         if (!disposed) {
-          appendTerminalChunk(event)
+          publishTerminalOutput(event)
         }
       })
       unlistenTerminalState = await listenTerminalState((event) => {
@@ -91,7 +103,7 @@ function App(): ReactElement {
       unlistenTerminalOutput?.()
       unlistenTerminalState?.()
     }
-  }, [appendTerminalChunk, refreshActiveProject, updateTerminalState])
+  }, [refreshActiveProject, updateTerminalState])
 
   if (isBooting) {
     return (
@@ -113,34 +125,38 @@ function App(): ReactElement {
       {snapshot ? (
         <PanelGroup autoSaveId="flowterm-layout" className="flex-1" direction="horizontal">
           <Panel defaultSize={15} minSize={12}>
-            <WorkspaceFileTree
+            <WorkspaceSidebar
               files={snapshot.files}
-              onSelectFile={selectFile}
-              selectedFilePath={selectedFilePath}
-            />
+              onSelectView={setWorkspaceSidebarView}
+              selectedView={workspaceSidebarView}
+            >
+              {workspaceSidebarView === 'tree' ? (
+                <WorkspaceFileTree
+                  files={snapshot.files}
+                  onSelectFile={selectFile}
+                  selectedFilePath={selectedFilePath}
+                />
+              ) : null}
+            </WorkspaceSidebar>
           </Panel>
           <ResizeHandle />
           <Panel defaultSize={55} minSize={28}>
             <WorkspaceDiffPanel
-              diffMode={diffMode}
-              diffs={diffMode === 'live' ? snapshot.liveDiffs : snapshot.gitDiffs}
-              onDiffModeChange={setDiffMode}
+              isLoading={isFilePreviewLoading}
+              onRequestWindow={requestPreviewWindow}
+              preview={filePreview}
               selectedFilePath={selectedFilePath}
             />
           </Panel>
           <ResizeHandle />
           <Panel defaultSize={30} minSize={20}>
             <WorkspaceTerminal
-              history={terminalHistory}
-              lastChunk={
-                lastTerminalEvent?.projectId === activeProjectId
-                  ? lastTerminalEvent.chunk
-                  : null
+              onAddPane={() => activeProjectId && void addTerminalPane(activeProjectId)}
+              onRemovePane={(paneId) =>
+                activeProjectId && void removeTerminalPane(activeProjectId, paneId)
               }
-              projectId={activeProjectId}
+              panes={buildTerminalPaneDescriptors(terminalProjectState)}
               resizeTerminal={resizeTerminal}
-              shellLabel={terminalShellLabel}
-              state={terminalState}
               writeTerminal={writeTerminal}
             />
           </Panel>

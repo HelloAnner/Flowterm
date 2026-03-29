@@ -3,33 +3,96 @@ import '@xterm/xterm/css/xterm.css'
 import { type ReactElement, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { Rows2, X } from 'lucide-react'
 
+import { subscribeTerminalOutput } from '../features/workspace/terminal-stream'
 import { cn } from '../lib/utils'
 import type { TerminalState } from '../lib/contracts'
 
-interface WorkspaceTerminalProps {
+export interface TerminalPaneDescriptor {
+  id: string
   history: string
   lastChunk: string | null
-  projectId: string | null
-  resizeTerminal: (projectId: string, cols: number, rows: number) => Promise<void>
+  projectId: string
+  sessionId: string
   shellLabel: string
   state: TerminalState
-  writeTerminal: (projectId: string, data: string) => Promise<void>
+}
+
+interface WorkspaceTerminalProps {
+  onAddPane: () => void
+  onRemovePane: (paneId: string) => void
+  panes: TerminalPaneDescriptor[]
+  resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
+  writeTerminal: (sessionId: string, data: string) => Promise<void>
 }
 
 export function WorkspaceTerminal({
-  history,
-  lastChunk,
-  projectId,
+  onAddPane,
+  onRemovePane,
+  panes,
   resizeTerminal,
-  shellLabel,
-  state,
   writeTerminal,
 }: WorkspaceTerminalProps): ReactElement {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[var(--terminal-bg)]">
+      <div className="flex h-7 shrink-0 items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4">
+        <span className="font-mono text-[11px] text-[var(--text-muted)]">终端</span>
+        {panes.length < 3 ? (
+          <button
+            className="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+            onClick={onAddPane}
+            title="分割终端"
+            type="button"
+          >
+            <Rows2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
+      <PanelGroup className="min-h-0 flex-1" direction="vertical">
+        {panes.flatMap((pane, index) =>
+          [
+            index > 0 ? (
+              <PanelResizeHandle
+                className="group h-1 shrink-0 bg-[#0a0a0a] data-[resize-handle-active]:bg-[var(--border-subtle)]"
+                key={`handle-${pane.id}`}
+              >
+                <span className="block h-px bg-[#1c1c1c] group-hover:bg-[var(--border-subtle)]" />
+              </PanelResizeHandle>
+            ) : null,
+            <Panel key={pane.id} minSize={15}>
+              <TerminalPane
+                onRemove={panes.length > 1 ? () => onRemovePane(pane.id) : null}
+                pane={pane}
+                resizeTerminal={resizeTerminal}
+                writeTerminal={writeTerminal}
+              />
+            </Panel>,
+          ].filter(Boolean),
+        )}
+      </PanelGroup>
+    </div>
+  )
+}
+
+interface TerminalPaneProps {
+  onRemove: (() => void) | null
+  pane: TerminalPaneDescriptor
+  resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
+  writeTerminal: (sessionId: string, data: string) => Promise<void>
+}
+
+function TerminalPane({
+  onRemove,
+  pane,
+  resizeTerminal,
+  writeTerminal,
+}: TerminalPaneProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
-  const attachedProjectRef = useRef<string | null>(null)
+  const attachedSessionRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -40,10 +103,10 @@ export function WorkspaceTerminal({
       cursorBlink: true,
       fontFamily:
         '"Berkeley Mono", "Geist Mono", "JetBrains Mono", ui-monospace, monospace',
-      fontSize: 15,
+      fontSize: 13,
       lineHeight: 1.6,
       theme: {
-        background: '#0C0C0C',
+        background: '#0F0F0F',
         cursor: '#C8A96E',
         foreground: '#E8E3DC',
       },
@@ -57,9 +120,7 @@ export function WorkspaceTerminal({
     })
 
     terminal.onData((data) => {
-      if (projectId) {
-        void writeTerminal(projectId, data)
-      }
+      void writeTerminal(pane.sessionId, data)
     })
 
     const observer = new ResizeObserver(() => {
@@ -68,8 +129,8 @@ export function WorkspaceTerminal({
       })
       const dimensions = fitAddon.proposeDimensions()
 
-      if (projectId && dimensions) {
-        void resizeTerminal(projectId, dimensions.cols, dimensions.rows)
+      if (dimensions) {
+        void resizeTerminal(pane.sessionId, dimensions.cols, dimensions.rows)
       }
     })
 
@@ -81,52 +142,61 @@ export function WorkspaceTerminal({
       observer.disconnect()
       terminal.dispose()
     }
-  }, [projectId, resizeTerminal, writeTerminal])
+  }, [pane.sessionId, resizeTerminal, writeTerminal])
 
   useEffect(() => {
     const terminal = terminalRef.current
     const fitAddon = fitAddonRef.current
 
-    if (!terminal || !fitAddon || !projectId) {
+    if (!terminal || !fitAddon) {
       return
     }
 
-    if (attachedProjectRef.current !== projectId) {
+    if (attachedSessionRef.current !== pane.sessionId) {
       terminal.reset()
-      terminal.write(history)
+      terminal.write(pane.history)
       requestAnimationFrame(() => {
         fitAddon.fit()
       })
-      attachedProjectRef.current = projectId
+      attachedSessionRef.current = pane.sessionId
       const dimensions = fitAddon.proposeDimensions()
 
       if (dimensions) {
-        void resizeTerminal(projectId, dimensions.cols, dimensions.rows)
+        void resizeTerminal(pane.sessionId, dimensions.cols, dimensions.rows)
       }
     }
-  }, [history, projectId, resizeTerminal])
+  }, [pane.history, pane.sessionId, resizeTerminal])
 
   useEffect(() => {
-    if (!lastChunk || !projectId || attachedProjectRef.current !== projectId) {
+    if (attachedSessionRef.current !== pane.sessionId) {
       return
     }
 
-    terminalRef.current?.write(lastChunk)
-  }, [lastChunk, projectId])
+    return subscribeTerminalOutput(pane.sessionId, (chunk) => {
+      terminalRef.current?.write(chunk)
+    })
+  }, [pane.sessionId])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--terminal-bg)]">
-      <div className="flex h-7 items-center gap-3 border-b border-[var(--border-subtle)] bg-[#111111] px-4 text-xs">
-        <span className={cn('font-medium', resolveTerminalTone(state))}>
-          {resolveTerminalLabel(state)}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-7 shrink-0 items-center justify-between border-b border-[var(--border-subtle)] px-4">
+        <span className={cn('text-xs font-medium', resolveTerminalTone(pane.state))}>
+          {resolveTerminalLabel(pane.state)}
         </span>
-        <span className="text-[var(--text-muted)]">{shellLabel}</span>
-      </div>
-      <div className="min-h-0 flex-1 px-4 py-3">
-        <div className="h-full w-full rounded-md border border-[var(--border-subtle)] bg-black/10">
-          <div className="h-full w-full p-2" ref={containerRef} />
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-[var(--text-muted)]">{pane.shellLabel}</span>
+          {onRemove ? (
+            <button
+              className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+              onClick={onRemove}
+              type="button"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          ) : null}
         </div>
       </div>
+      <div className="min-h-0 flex-1 p-3" ref={containerRef} />
     </div>
   )
 }
@@ -136,9 +206,9 @@ function resolveTerminalLabel(state: TerminalState): string {
     return '等待你的输入'
   }
   if (state === 'running') {
-    return '终端会话运行中'
+    return '运行中'
   }
-  return '终端已就绪'
+  return '就绪'
 }
 
 function resolveTerminalTone(state: TerminalState): string {
@@ -148,5 +218,5 @@ function resolveTerminalTone(state: TerminalState): string {
   if (state === 'running') {
     return 'text-[var(--accent-sage)]'
   }
-  return 'text-[var(--text-secondary)]'
+  return 'text-[var(--text-muted)]'
 }

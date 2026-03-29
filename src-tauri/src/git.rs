@@ -1,20 +1,20 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fs,
     path::Path,
     process::Command,
 };
 
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use walkdir::WalkDir;
 
 use crate::models::{
-    DiffChangeType, DiffLine, DiffLineKind, FileDiff, LiveStatus, ProjectFileEntry,
+    DiffLine, DiffLineKind, FilePreview, FilePreviewMode, LiveStatus, ProjectFileEntry,
 };
 
 pub struct ProjectScan {
     pub changed_file_count: usize,
-    pub diffs: Vec<FileDiff>,
     pub files: Vec<ProjectFileEntry>,
     pub untracked_file_count: usize,
 }
@@ -22,16 +22,63 @@ pub struct ProjectScan {
 pub fn scan_project(project_path: &Path, live_files: &HashSet<String>) -> Result<ProjectScan> {
     let statuses = collect_git_statuses(project_path).unwrap_or_default();
     let files = collect_files(project_path, &statuses, live_files)?;
-    let diffs = build_diffs(project_path, &statuses)?;
     let changed_file_count = files.iter().filter(|file| file.git_status != ' ').count();
     let untracked_file_count = files.iter().filter(|file| file.git_status == '?').count();
 
     Ok(ProjectScan {
         changed_file_count,
-        diffs,
         files,
         untracked_file_count,
     })
+}
+
+pub fn build_file_preview_with_options(
+    project_path: &Path,
+    relative_path: &str,
+    live_files: &HashSet<String>,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
+) -> Result<FilePreview> {
+    let statuses = collect_git_statuses(project_path).unwrap_or_default();
+    let git_status = *statuses.get(relative_path).unwrap_or(&' ');
+    let live_status = resolve_live_status(live_files, relative_path, git_status);
+    let absolute_path = project_path.join(relative_path);
+
+    if let Some(mime_type) = resolve_image_mime(relative_path) {
+        if absolute_path.exists() {
+            return build_image_preview(
+                &absolute_path,
+                relative_path,
+                git_status,
+                live_status,
+                mime_type,
+            );
+        }
+    }
+
+    match git_status {
+        '?' | 'A' => build_untracked_preview(project_path, relative_path, git_status, live_status),
+        'D' => build_git_preview(project_path, relative_path, git_status, live_status),
+        'M' => build_git_preview(project_path, relative_path, git_status, live_status.clone())
+            .or_else(|_| {
+                build_text_preview(
+                    project_path,
+                    relative_path,
+                    git_status,
+                    live_status,
+                    start_line,
+                    line_count,
+                )
+            }),
+        _ => build_text_preview(
+            project_path,
+            relative_path,
+            git_status,
+            live_status,
+            start_line,
+            line_count,
+        ),
+    }
 }
 
 fn collect_files(
@@ -80,37 +127,23 @@ fn collect_files(
     Ok(files)
 }
 
-fn build_diffs(project_path: &Path, statuses: &HashMap<String, char>) -> Result<Vec<FileDiff>> {
-    let mut ordered_statuses = BTreeMap::new();
-
-    for (path, status) in statuses {
-        if *status != ' ' {
-            ordered_statuses.insert(path.clone(), *status);
-        }
-    }
-
-    let mut diffs = Vec::new();
-
-    for (path, status) in ordered_statuses {
-        let diff = match status {
-            '?' => build_untracked_diff(project_path, &path)?,
-            'A' => build_untracked_diff(project_path, &path)?,
-            _ => build_git_diff(project_path, &path, status)?,
-        };
-
-        if let Some(file_diff) = diff {
-            diffs.push(file_diff);
-        }
-    }
-
-    Ok(diffs)
-}
-
-fn build_untracked_diff(project_path: &Path, relative_path: &str) -> Result<Option<FileDiff>> {
+fn build_untracked_preview(
+    project_path: &Path,
+    relative_path: &str,
+    git_status: char,
+    live_status: LiveStatus,
+) -> Result<FilePreview> {
     let absolute_path = project_path.join(relative_path);
 
     if !absolute_path.exists() {
-        return Ok(None);
+        return build_text_preview(
+            project_path,
+            relative_path,
+            git_status,
+            live_status,
+            None,
+            None,
+        );
     }
 
     let content = fs::read_to_string(&absolute_path).unwrap_or_default();
@@ -130,18 +163,24 @@ fn build_untracked_diff(project_path: &Path, relative_path: &str) -> Result<Opti
         });
     }
 
-    Ok(Some(FileDiff {
-        change_type: DiffChangeType::Untracked,
+    Ok(FilePreview {
+        git_status,
+        image_data_url: None,
+        start_line: 0,
+        total_lines: lines.len(),
         lines,
+        live_status,
+        mode: FilePreviewMode::Diff,
         path: relative_path.to_string(),
-    }))
+    })
 }
 
-fn build_git_diff(
+fn build_git_preview(
     project_path: &Path,
     relative_path: &str,
     status: char,
-) -> Result<Option<FileDiff>> {
+    live_status: LiveStatus,
+) -> Result<FilePreview> {
     let output = Command::new("git")
         .arg("diff")
         .arg("--no-ext-diff")
@@ -154,24 +193,108 @@ fn build_git_diff(
         .with_context(|| format!("failed to run git diff for {relative_path}"))?;
 
     if !output.status.success() || output.stdout.is_empty() {
-        return Ok(None);
+        return build_text_preview(
+            project_path,
+            relative_path,
+            status,
+            live_status,
+            None,
+            None,
+        );
     }
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
     let lines = parse_unified_diff(&diff_text);
 
     if lines.is_empty() {
-        return Ok(None);
+        return build_text_preview(
+            project_path,
+            relative_path,
+            status,
+            live_status,
+            None,
+            None,
+        );
     }
 
-    Ok(Some(FileDiff {
-        change_type: match status {
-            'D' => DiffChangeType::Deleted,
-            _ => DiffChangeType::Modified,
-        },
+    Ok(FilePreview {
+        git_status: status,
+        image_data_url: None,
+        start_line: 0,
+        total_lines: lines.len(),
         lines,
+        live_status,
+        mode: FilePreviewMode::Diff,
         path: relative_path.to_string(),
-    }))
+    })
+}
+
+fn build_image_preview(
+    absolute_path: &Path,
+    relative_path: &str,
+    git_status: char,
+    live_status: LiveStatus,
+    mime_type: &'static str,
+) -> Result<FilePreview> {
+    let bytes = fs::read(absolute_path)
+        .with_context(|| format!("failed to read preview image {}", absolute_path.display()))?;
+    let data_url = format!("data:{mime_type};base64,{}", STANDARD.encode(bytes));
+
+    Ok(FilePreview {
+        git_status,
+        image_data_url: Some(data_url),
+        lines: Vec::new(),
+        live_status,
+        mode: FilePreviewMode::Image,
+        path: relative_path.to_string(),
+        start_line: 0,
+        total_lines: 1,
+    })
+}
+
+fn build_text_preview(
+    project_path: &Path,
+    relative_path: &str,
+    git_status: char,
+    live_status: LiveStatus,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
+) -> Result<FilePreview> {
+    let absolute_path = project_path.join(relative_path);
+    let content = fs::read_to_string(&absolute_path)
+        .with_context(|| format!("failed to read preview file {}", absolute_path.display()))?;
+    let all_lines = content.lines().collect::<Vec<_>>();
+    let total_lines = all_lines.len();
+    let requested_start_line = start_line.unwrap_or(0).min(total_lines);
+    let requested_line_count = line_count.unwrap_or(total_lines.saturating_sub(requested_start_line));
+    let requested_end_line = requested_start_line
+        .saturating_add(requested_line_count)
+        .min(total_lines);
+    let lines = all_lines[requested_start_line..requested_end_line]
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let line_number = requested_start_line + index + 1;
+
+            DiffLine {
+                content: line.to_string(),
+                kind: DiffLineKind::Context,
+                old_line_number: Some(line_number),
+                new_line_number: Some(line_number),
+            }
+        })
+        .collect();
+
+    Ok(FilePreview {
+        git_status,
+        image_data_url: None,
+        lines,
+        live_status,
+        mode: FilePreviewMode::Text,
+        path: relative_path.to_string(),
+        start_line: requested_start_line,
+        total_lines,
+    })
 }
 
 fn collect_git_statuses(project_path: &Path) -> Result<HashMap<String, char>> {
@@ -335,6 +458,34 @@ fn resolve_live_status(live_files: &HashSet<String>, relative_path: &str, git_st
     }
 }
 
+fn resolve_image_mime(relative_path: &str) -> Option<&'static str> {
+    let extension = relative_path.rsplit('.').next()?.to_ascii_lowercase();
+
+    match extension.as_str() {
+        "apng" => Some("image/apng"),
+        "avif" => Some("image/avif"),
+        "bmp" => Some("image/bmp"),
+        "cur" => Some("image/x-icon"),
+        "dds" => Some("image/vnd-ms.dds"),
+        "gif" => Some("image/gif"),
+        "heic" => Some("image/heic"),
+        "heif" => Some("image/heif"),
+        "ico" => Some("image/x-icon"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "jfif" => Some("image/jpeg"),
+        "jxl" => Some("image/jxl"),
+        "pbm" => Some("image/x-portable-bitmap"),
+        "pgm" => Some("image/x-portable-graymap"),
+        "png" => Some("image/png"),
+        "pnm" => Some("image/x-portable-anymap"),
+        "ppm" => Some("image/x-portable-pixmap"),
+        "svg" | "svgz" => Some("image/svg+xml"),
+        "tif" | "tiff" => Some("image/tiff"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
 fn should_visit(path: &Path) -> bool {
     let ignored = [
         ".git",
@@ -351,8 +502,24 @@ fn should_visit(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_porcelain_line, parse_unified_diff};
+    use std::{collections::HashSet, fs, time::{SystemTime, UNIX_EPOCH}};
+
+    use super::{
+        build_file_preview_with_options,
+        parse_porcelain_line,
+        parse_unified_diff,
+    };
     use crate::models::DiffLineKind;
+
+    fn create_temp_project_root() -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("flowterm-preview-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn parses_porcelain_status_lines() {
@@ -389,5 +556,84 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(lines[2].old_line_number, Some(2));
         assert_eq!(lines[3].kind, DiffLineKind::Added);
         assert_eq!(lines[3].new_line_number, Some(2));
+    }
+
+    #[test]
+    fn builds_clean_text_preview_with_full_file_content() {
+        let root = create_temp_project_root();
+        let file_path = root.join("README.md");
+        fs::write(&file_path, "line one\nline two\n").unwrap();
+
+        let preview =
+            build_file_preview_with_options(&root, "README.md", &HashSet::new(), None, None)
+                .unwrap();
+
+        assert_eq!(preview.path, "README.md");
+        assert_eq!(preview.lines.len(), 2);
+        assert_eq!(preview.lines[0].kind, DiffLineKind::Context);
+        assert_eq!(preview.lines[0].old_line_number, Some(1));
+        assert_eq!(preview.lines[0].new_line_number, Some(1));
+        assert_eq!(preview.lines[0].content, "line one");
+        assert_eq!(preview.lines[1].content, "line two");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn builds_image_preview_with_data_url() {
+        let root = create_temp_project_root();
+        let file_path = root.join("pixel.png");
+        fs::write(
+            &file_path,
+            [
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+                0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+                0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+                0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB1, 0x00, 0x00, 0x00,
+                0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+            ],
+        )
+        .unwrap();
+
+        let preview =
+            build_file_preview_with_options(&root, "pixel.png", &HashSet::new(), None, None)
+                .unwrap();
+
+        assert!(matches!(preview.mode, crate::models::FilePreviewMode::Image));
+        assert!(preview
+            .image_data_url
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("data:image/png;base64,"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn builds_text_preview_chunk_with_total_lines() {
+        let root = create_temp_project_root();
+        let file_path = root.join("story.txt");
+        let content = (1..=40)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&file_path, content).unwrap();
+
+        let preview = build_file_preview_with_options(
+            &root,
+            "story.txt",
+            &HashSet::new(),
+            Some(10),
+            Some(5),
+        )
+        .unwrap();
+
+        assert_eq!(preview.start_line, 10);
+        assert_eq!(preview.total_lines, 40);
+        assert_eq!(preview.lines.len(), 5);
+        assert_eq!(preview.lines[0].content, "line 11");
+
+        let _ = fs::remove_dir_all(root);
     }
 }

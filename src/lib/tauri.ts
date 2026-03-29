@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import type {
   AppBootstrap,
+  FilePreview,
   ProjectRefreshEvent,
   ProjectSnapshot,
   TerminalAttachment,
@@ -47,25 +48,46 @@ export async function refreshProjectSnapshot(
   return invoke<ProjectSnapshot>('refresh_project_snapshot', { projectId })
 }
 
+export async function readFilePreview(
+  projectId: string,
+  path: string,
+  options?: {
+    startLine?: number
+    lineCount?: number
+  },
+): Promise<FilePreview> {
+  return invoke<FilePreview>('read_file_preview', {
+    lineCount: options?.lineCount,
+    path,
+    projectId,
+    startLine: options?.startLine,
+  })
+}
+
 export async function attachTerminal(
   projectId: string,
+  paneId?: string,
 ): Promise<TerminalAttachment> {
-  return invoke<TerminalAttachment>('attach_terminal', { projectId })
+  return invoke<TerminalAttachment>('attach_terminal', { paneId, projectId })
 }
 
 export async function writeTerminal(
-  projectId: string,
+  sessionId: string,
   data: string,
 ): Promise<void> {
-  return invoke('write_terminal', { projectId, data })
+  return invoke('write_terminal', { sessionId, data })
 }
 
 export async function resizeTerminal(
-  projectId: string,
+  sessionId: string,
   cols: number,
   rows: number,
 ): Promise<void> {
-  return invoke('resize_terminal', { projectId, cols, rows })
+  return invoke('resize_terminal', { sessionId, cols, rows })
+}
+
+export async function closeTerminal(sessionId: string): Promise<void> {
+  return invoke('close_terminal', { sessionId })
 }
 
 export async function listenProjectRefresh(

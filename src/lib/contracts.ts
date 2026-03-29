@@ -18,9 +18,14 @@ export interface DiffLine {
   newLineNumber: number | null
 }
 
-export interface FileDiff {
+export interface FilePreview {
   path: string
-  changeType: 'added' | 'deleted' | 'modified' | 'untracked'
+  mode: 'diff' | 'image' | 'text'
+  gitStatus: GitStatusCode
+  liveStatus: LiveStatus
+  imageDataUrl: string | null
+  startLine: number
+  totalLines: number
   lines: DiffLine[]
 }
 
@@ -37,14 +42,14 @@ export interface ProjectSummary {
 export interface ProjectSnapshot {
   project: ProjectSummary
   files: ProjectFileEntry[]
-  liveDiffs: FileDiff[]
-  gitDiffs: FileDiff[]
   backend: 'xterm'
 }
 
 export interface TerminalAttachment {
   history: string
+  paneId: string
   projectId: string
+  sessionId: string
   shellLabel: string
   state: TerminalState
 }
@@ -62,10 +67,14 @@ export interface ProjectRefreshEvent {
 
 export interface TerminalOutputEvent {
   chunk: string
+  paneId: string
   projectId: string
+  sessionId: string
 }
 
 export interface TerminalStateEvent {
+  paneId: string
   projectId: string
+  sessionId: string
   state: TerminalState
 }
