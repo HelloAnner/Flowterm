@@ -1,4 +1,6 @@
 import type {
+  AgentStatusEvent,
+  AgentStatusSnapshot,
   TerminalAttachment,
   TerminalState,
   TerminalStateEvent,
@@ -6,6 +8,7 @@ import type {
 import type { TerminalPaneDescriptor } from '../../components/workspace-terminal'
 
 export interface TerminalPaneState {
+  agentStatus: AgentStatusSnapshot
   cwd: string | null
   history: string
   paneId: string
@@ -38,6 +41,7 @@ export function applyTerminalAttachment(
     panesById: {
       ...state.panesById,
       [attachment.paneId]: {
+        agentStatus: attachment.agentStatus,
         cwd: attachment.cwd,
         history: attachment.history,
         paneId: attachment.paneId,
@@ -45,6 +49,35 @@ export function applyTerminalAttachment(
         sessionId: attachment.sessionId,
         shellLabel: attachment.shellLabel,
         state: attachment.state,
+      },
+    },
+  }
+}
+
+export function updateAgentStatus(
+  state: TerminalProjectState,
+  event: AgentStatusEvent,
+): TerminalProjectState {
+  const pane = state.panesById[event.paneId]
+
+  if (
+    !pane ||
+    pane.sessionId !== event.sessionId ||
+    (pane.agentStatus.agent === event.agent && pane.agentStatus.phase === event.phase)
+  ) {
+    return state
+  }
+
+  return {
+    ...state,
+    panesById: {
+      ...state.panesById,
+      [event.paneId]: {
+        ...pane,
+        agentStatus: {
+          agent: event.agent,
+          phase: event.phase,
+        },
       },
     },
   }
@@ -96,6 +129,7 @@ export function buildTerminalPaneDescriptors(
     .map((paneId) => state.panesById[paneId])
     .filter((pane): pane is TerminalPaneState => Boolean(pane))
     .map((pane) => ({
+      agentStatus: pane.agentStatus,
       cwd: pane.cwd,
       history: pane.history,
       id: pane.paneId,
@@ -104,4 +138,28 @@ export function buildTerminalPaneDescriptors(
       shellLabel: pane.shellLabel,
       state: pane.state,
     }))
+}
+
+export function aggregateTerminalState(
+  state: TerminalProjectState,
+): TerminalState {
+  let aggregateState: TerminalState = 'idle'
+
+  for (const paneId of state.paneOrder) {
+    const pane = state.panesById[paneId]
+
+    if (!pane) {
+      continue
+    }
+
+    if (pane.state === 'attention') {
+      return 'attention'
+    }
+
+    if (pane.state === 'running') {
+      aggregateState = 'running'
+    }
+  }
+
+  return aggregateState
 }

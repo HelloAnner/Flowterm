@@ -2,6 +2,12 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { create } from 'zustand'
 
 import {
+  DEFAULT_THEME_ID,
+  getThemeById,
+  readStoredThemeId,
+  storeThemeId,
+} from '../features/theme/theme-registry'
+import {
   activateProject,
   addProject as addProjectCommand,
   attachTerminal,
@@ -18,6 +24,7 @@ import {
   writeTerminal as writeTerminalCommand,
 } from '../lib/tauri'
 import type {
+  AgentStatusEvent,
   AppBootstrap,
   FilePreview,
   ProjectSnapshot,
@@ -30,20 +37,27 @@ import {
   createProjectWorkspaceState,
   normalizeTerminalPaneSizes,
 } from '../features/workspace/project-memory'
+import { shouldRefreshPreview } from '../features/workspace/project-refresh'
 import { resolveSelectedFilePath } from '../features/workspace/selection'
+import { toggleExpandedPath } from '../features/workspace/tree-expansion'
 import {
   applyTerminalAttachment as applyTerminalPaneAttachment,
+  aggregateTerminalState,
   createTerminalProjectState,
   removeTerminalPane as removeTerminalPaneState,
   type TerminalProjectState,
+  updateAgentStatus as updateTerminalPaneAgentStatus,
   updateTerminalState as updateTerminalPaneState,
 } from '../features/workspace/terminal-panes'
+import { createWorkspacePersistScheduler } from '../features/workspace/workspace-persist'
 
 const MAX_TERMINAL_PANES = 3
 const PREVIEW_CHUNK_SIZE = 200
+const workspacePersistScheduler = createWorkspacePersistScheduler()
 
 interface WorkspaceState {
   activeProjectId: string | null
+  activeThemeId: string
   draftName: string
   draftPath: string
   error: string | null
@@ -72,16 +86,25 @@ interface WorkspaceState {
   ) => Promise<void>
   openProjectDialog: () => void
   pickProjectDirectory: () => Promise<void>
-  refreshActiveProject: (projectId?: string) => Promise<void>
+  hydrateThemePreference: () => void
+  refreshActiveProject: (
+    projectId?: string,
+    options?: {
+      changedPaths?: string[]
+    },
+  ) => Promise<void>
   removeProject: (projectId: string) => Promise<void>
   removeTerminalPane: (projectId: string, paneId: string) => Promise<void>
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
   selectFile: (path: string) => Promise<void>
   selectProject: (projectId: string) => Promise<void>
+  selectTheme: (themeId: string) => void
   setDraftName: (value: string) => void
   setDraftPath: (value: string) => void
+  setTreePathExpanded: (projectId: string, path: string, expanded: boolean) => void
   setTreeExpandedPaths: (projectId: string, expandedPaths: Record<string, boolean>) => void
   submitProject: () => Promise<void>
+  updateAgentStatus: (event: AgentStatusEvent) => void
   updateTerminalPaneSizes: (projectId: string, paneSizes: number[]) => void
   updateTerminalState: (event: TerminalStateEvent) => void
   writeTerminal: (sessionId: string, data: string) => Promise<void>
@@ -89,6 +112,7 @@ interface WorkspaceState {
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeProjectId: null,
+  activeThemeId: DEFAULT_THEME_ID,
   draftName: '',
   draftPath: '',
   error: null,
@@ -113,12 +137,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     await get().attachTerminalPane(projectId, createPaneId())
-    const nextPaneCount =
-      ensureProjectTerminalState(get().terminalProjectStateByProject, projectId).paneOrder.length
-    get().updateTerminalPaneSizes(
-      projectId,
-      normalizeTerminalPaneSizes([], nextPaneCount),
-    )
   },
   applyBootstrap: (bootstrap) => {
     const selectedFilePath = resolveSnapshotSelection(
@@ -179,15 +197,42 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ? await attachTerminal(projectId, paneId)
       : createMockTerminalAttachment(projectId, targetPaneId)
 
-    set((state) => ({
-      terminalProjectStateByProject: {
-        ...state.terminalProjectStateByProject,
-        [projectId]: applyTerminalPaneAttachment(
-          ensureProjectTerminalState(state.terminalProjectStateByProject, projectId),
-          terminal,
+    set((state) => {
+      const previousTerminalProjectState = ensureProjectTerminalState(
+        state.terminalProjectStateByProject,
+        projectId,
+      )
+      const terminalProjectState = applyTerminalPaneAttachment(previousTerminalProjectState, terminal)
+      const hasNewPane =
+        previousTerminalProjectState.paneOrder.length !== terminalProjectState.paneOrder.length
+      const workspaceState = ensureProjectWorkspaceState(state.workspaceStateByProject, projectId)
+
+      return {
+        projects: syncProjectTerminalState(
+          state.projects,
+          projectId,
+          terminalProjectState,
         ),
-      },
-    }))
+        terminalProjectStateByProject: {
+          ...state.terminalProjectStateByProject,
+          [projectId]: terminalProjectState,
+        },
+        workspaceStateByProject: hasNewPane
+          ? {
+              ...state.workspaceStateByProject,
+              [projectId]: {
+                ...workspaceState,
+                terminalPaneSizes: normalizeTerminalPaneSizes(
+                  [],
+                  terminalProjectState.paneOrder.length,
+                ),
+              },
+            }
+          : state.workspaceStateByProject,
+      }
+    })
+
+    void persistProjectWorkspace(projectId, get)
 
     return terminal
   },
@@ -284,7 +329,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ draftPath: selectedPath })
     }
   },
-  refreshActiveProject: async (projectId) => {
+  hydrateThemePreference: () => {
+    set({ activeThemeId: readStoredThemeId() })
+  },
+  refreshActiveProject: async (projectId, options) => {
     const targetProjectId = projectId ?? get().activeProjectId
 
     if (!targetProjectId) {
@@ -292,6 +340,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     try {
+      const previousSelectedFilePath = get().selectedFilePath
       const snapshot = await refreshProjectSnapshot(targetProjectId)
       const workspaceState = ensureProjectWorkspaceState(
         get().workspaceStateByProject,
@@ -301,21 +350,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         snapshot,
         workspaceState.selectedFilePath,
       )
-      set({
+      const previewShouldRefresh = shouldRefreshPreview({
+        changedPaths: options?.changedPaths,
+        nextSelectedFilePath: selectedFilePath,
+        previousSelectedFilePath,
+      })
+
+      set((state) => ({
         error: null,
-        isFilePreviewLoading: Boolean(selectedFilePath),
+        filePreview: selectedFilePath ? state.filePreview : null,
+        isFilePreviewLoading: previewShouldRefresh,
+        projects: replaceProjectSummary(state.projects, snapshot.project),
         selectedFilePath,
         snapshot,
         workspaceStateByProject: {
-          ...get().workspaceStateByProject,
+          ...state.workspaceStateByProject,
           [targetProjectId]: {
             ...workspaceState,
             selectedFilePath,
           },
         },
-      })
+      }))
       void persistProjectWorkspace(targetProjectId, get)
-      void get().fetchFilePreview(targetProjectId, selectedFilePath)
+
+      if (previewShouldRefresh) {
+        void get().fetchFilePreview(targetProjectId, selectedFilePath)
+      }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '刷新项目失败' })
     }
@@ -365,6 +425,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       )
 
       return {
+        projects: syncProjectTerminalState(
+          state.projects,
+          projectId,
+          terminalProjectState,
+        ),
         terminalProjectStateByProject: {
           ...state.terminalProjectStateByProject,
           [projectId]: terminalProjectState,
@@ -435,6 +500,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         error: null,
         filePreview: null,
         isFilePreviewLoading: Boolean(selectedFilePath),
+        projects: replaceProjectSummary(get().projects, snapshot.project),
         selectedFilePath,
         snapshot,
         terminalProjectStateByProject: {
@@ -459,11 +525,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ error: error instanceof Error ? error.message : '切换项目失败' })
     }
   },
+  selectTheme: (themeId) => {
+    const nextTheme = getThemeById(themeId)
+
+    storeThemeId(nextTheme.id)
+    set({ activeThemeId: nextTheme.id })
+  },
   setDraftName: (value) => {
     set({ draftName: value })
   },
   setDraftPath: (value) => {
     set({ draftPath: value })
+  },
+  setTreePathExpanded: (projectId, path, expanded) => {
+    set((state) => {
+      const workspaceState = ensureProjectWorkspaceState(
+        state.workspaceStateByProject,
+        projectId,
+      )
+      const nextExpandedPaths = toggleExpandedPath(
+        workspaceState.treeExpandedPaths,
+        path,
+        expanded,
+      )
+
+      if (nextExpandedPaths === workspaceState.treeExpandedPaths) {
+        return state
+      }
+
+      return {
+        workspaceStateByProject: {
+          ...state.workspaceStateByProject,
+          [projectId]: {
+            ...workspaceState,
+            treeExpandedPaths: nextExpandedPaths,
+          },
+        },
+      }
+    })
+    schedulePersistProjectWorkspace(projectId, get)
   },
   setTreeExpandedPaths: (projectId, expandedPaths) => {
     set((state) => ({
@@ -475,7 +575,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
       },
     }))
-    void persistProjectWorkspace(projectId, get)
+    schedulePersistProjectWorkspace(projectId, get)
   },
   submitProject: async () => {
     const path = get().draftPath.trim()
@@ -502,6 +602,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ error: error instanceof Error ? error.message : '添加项目失败' })
     }
   },
+  updateAgentStatus: (event) => {
+    set((state) => ({
+      terminalProjectStateByProject: {
+        ...state.terminalProjectStateByProject,
+        [event.projectId]: updateTerminalPaneAgentStatus(
+          ensureProjectTerminalState(state.terminalProjectStateByProject, event.projectId),
+          event,
+        ),
+      },
+    }))
+  },
   updateTerminalPaneSizes: (projectId, paneSizes) => {
     const paneCount = ensureProjectTerminalState(
       get().terminalProjectStateByProject,
@@ -519,7 +630,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     void persistProjectWorkspace(projectId, get)
   },
   updateTerminalState: (event) => {
+    if (event.state === 'exited') {
+      set((state) => {
+        const terminalProjectState = removeTerminalPaneState(
+          ensureProjectTerminalState(state.terminalProjectStateByProject, event.projectId),
+          event.paneId,
+        )
+        const workspaceState = ensureProjectWorkspaceState(
+          state.workspaceStateByProject,
+          event.projectId,
+        )
+
+        return {
+          projects: syncProjectTerminalState(
+            state.projects,
+            event.projectId,
+            terminalProjectState,
+          ),
+          terminalProjectStateByProject: {
+            ...state.terminalProjectStateByProject,
+            [event.projectId]: terminalProjectState,
+          },
+          workspaceStateByProject: {
+            ...state.workspaceStateByProject,
+            [event.projectId]: {
+              ...workspaceState,
+              terminalPaneSizes: normalizeTerminalPaneSizes(
+                workspaceState.terminalPaneSizes,
+                terminalProjectState.paneOrder.length,
+              ),
+            },
+          },
+        }
+      })
+      void persistProjectWorkspace(event.projectId, get)
+      return
+    }
+
     set((state) => ({
+      projects: syncProjectTerminalState(
+        state.projects,
+        event.projectId,
+        updateTerminalPaneState(
+          ensureProjectTerminalState(state.terminalProjectStateByProject, event.projectId),
+          event,
+        ),
+      ),
       terminalProjectStateByProject: {
         ...state.terminalProjectStateByProject,
         [event.projectId]: updateTerminalPaneState(
@@ -563,6 +719,40 @@ function ensureProjectWorkspaceState(
   return workspaceStateByProject[projectId] ?? createProjectWorkspaceState()
 }
 
+function replaceProjectSummary(
+  projects: ProjectSummary[],
+  summary: ProjectSummary,
+): ProjectSummary[] {
+  let found = false
+  const nextProjects = projects.map((project) => {
+    if (project.id !== summary.id) {
+      return project
+    }
+
+    found = true
+    return summary
+  })
+
+  return found ? nextProjects : [...nextProjects, summary]
+}
+
+function syncProjectTerminalState(
+  projects: ProjectSummary[],
+  projectId: string,
+  terminalProjectState: TerminalProjectState,
+): ProjectSummary[] {
+  const terminalState = aggregateTerminalState(terminalProjectState)
+
+  return projects.map((project) =>
+    project.id === projectId
+      ? {
+          ...project,
+          terminalState,
+        }
+      : project,
+  )
+}
+
 async function persistProjectWorkspace(
   projectId: string,
   get: () => WorkspaceState,
@@ -577,6 +767,15 @@ async function persistProjectWorkspace(
   )
 
   await saveProjectWorkspace(projectId, workspaceState)
+}
+
+function schedulePersistProjectWorkspace(
+  projectId: string,
+  get: () => WorkspaceState,
+): void {
+  workspacePersistScheduler.schedule(projectId, () =>
+    persistProjectWorkspace(projectId, get),
+  )
 }
 
 function createPaneId(): string {
@@ -633,6 +832,10 @@ function createMockTerminalAttachment(
   overrides?: Partial<TerminalAttachment>,
 ): TerminalAttachment {
   return {
+    agentStatus: {
+      agent: 'unknown',
+      phase: 'idle',
+    },
     cwd: null,
     history: '',
     paneId,

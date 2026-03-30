@@ -1,5 +1,10 @@
 import type { CSSProperties } from 'react'
 
+import {
+  createSyntaxHighlightTheme,
+  getThemeById,
+} from '../theme/theme-registry'
+
 export interface PreviewSyntax {
   isMarkdown: boolean
   isPlainText: boolean
@@ -99,82 +104,12 @@ const languageAliasMap = new Map<string, PreviewSyntax>([
   ['yml', createSyntax('yaml', 'YAML')],
 ])
 
-export const warmSyntaxTheme: Record<string, CSSProperties> = {
-  'code[class*="language-"]': {
-    background: 'transparent',
-    color: '#e8e3dc',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '13px',
-    fontWeight: '400',
-    hyphens: 'none',
-    lineHeight: '1.85',
-    tabSize: 2,
-    textShadow: 'none',
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word',
-    wordSpacing: 'normal',
-  },
-  'pre[class*="language-"]': {
-    background: 'transparent',
-    color: '#e8e3dc',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '13px',
-    lineHeight: '1.85',
-    margin: '0',
-    overflow: 'visible',
-    padding: '0',
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word',
-  },
-  'pre > code[class*="language-"]': {
-    fontSize: '1em',
-  },
-  comment: {
-    color: '#7d756d',
-    fontStyle: 'italic',
-  },
-  builtin: {
-    color: '#7bb7c9',
-  },
-  className: {
-    color: '#7bb7c9',
-  },
-  constant: {
-    color: '#d7c3a0',
-  },
-  entity: {
-    color: '#9cc7a5',
-  },
-  function: {
-    color: '#7bb7c9',
-  },
-  keyword: {
-    color: '#d9b36c',
-  },
-  operator: {
-    color: '#d9b36c',
-  },
-  number: {
-    color: '#d7c3a0',
-  },
-  property: {
-    color: '#e8e3dc',
-  },
-  punctuation: {
-    color: '#968b81',
-  },
-  regex: {
-    color: '#d7c3a0',
-  },
-  string: {
-    color: '#9cc7a5',
-  },
-  tag: {
-    color: '#7bb7c9',
-  },
-  variable: {
-    color: '#e8e3dc',
-  },
+export const warmSyntaxTheme: Record<string, CSSProperties> = createSyntaxHighlightTheme(
+  getThemeById('flowterm-warm-dark'),
+)
+
+export function resolveSyntaxTheme(themeId: string): Record<string, CSSProperties> {
+  return createSyntaxHighlightTheme(getThemeById(themeId))
 }
 
 export function resolvePreviewSyntax(path: string): PreviewSyntax {
@@ -203,6 +138,10 @@ export function resolveCodeFenceSyntax(languageHint: string | null | undefined):
   }
 
   return languageAliasMap.get(languageHint.toLowerCase()) ?? PLAIN_TEXT_SYNTAX
+}
+
+export function shouldDelaySyntaxHighlight(syntax: PreviewSyntax): boolean {
+  return !syntax.isMarkdown && !syntax.isPlainText
 }
 
 function createSyntax(

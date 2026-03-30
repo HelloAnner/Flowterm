@@ -10,6 +10,7 @@ const {
   listTerminalsMock,
   readFilePreviewMock,
   readProjectWorkspaceMock,
+  refreshProjectSnapshotMock,
   saveProjectWorkspaceMock,
 } = vi.hoisted(() => ({
   attachTerminalMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   listTerminalsMock: vi.fn(),
   readFilePreviewMock: vi.fn(),
   readProjectWorkspaceMock: vi.fn(),
+  refreshProjectSnapshotMock: vi.fn(),
   saveProjectWorkspaceMock: vi.fn(),
 }))
 
@@ -35,7 +37,7 @@ vi.mock('../lib/tauri', () => ({
   listTerminals: listTerminalsMock,
   readFilePreview: readFilePreviewMock,
   readProjectWorkspace: readProjectWorkspaceMock,
-  refreshProjectSnapshot: vi.fn(),
+  refreshProjectSnapshot: refreshProjectSnapshotMock,
   removeProject: vi.fn(),
   resizeTerminal: vi.fn(),
   saveProjectWorkspace: saveProjectWorkspaceMock,
@@ -112,6 +114,7 @@ describe('workspace store bootstrap', () => {
       terminalPaneSizes: [],
       treeExpandedPaths: {},
     })
+    refreshProjectSnapshotMock.mockResolvedValue(bootstrapPayload.snapshot)
     saveProjectWorkspaceMock.mockResolvedValue(undefined)
   })
 
@@ -139,5 +142,348 @@ describe('workspace store bootstrap', () => {
     ])
 
     expect(bootstrapStatus).toBe('resolved')
+  })
+})
+
+describe('workspace store terminal panes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetWorkspaceState()
+    isTauriEnvironmentMock.mockReturnValue(true)
+    saveProjectWorkspaceMock.mockResolvedValue(undefined)
+  })
+
+  it('keeps pane sizes aligned with pane count while adding a split', async () => {
+    attachTerminalMock.mockResolvedValue({
+      agentStatus: {
+        agent: 'unknown',
+        phase: 'idle',
+      },
+      cwd: '/tmp/flowterm',
+      history: '',
+      paneId: 'pane-third',
+      projectId: 'project-a',
+      sessionId: 'session-third',
+      shellLabel: 'zsh',
+      state: 'idle',
+    })
+
+    useWorkspaceStore.setState({
+      terminalProjectStateByProject: {
+        'project-a': {
+          paneOrder: ['main', 'pane-second'],
+          panesById: {
+            main: {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'main',
+              projectId: 'project-a',
+              sessionId: 'session-main',
+              shellLabel: 'zsh',
+              state: 'idle',
+            },
+            'pane-second': {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'pane-second',
+              projectId: 'project-a',
+              sessionId: 'session-second',
+              shellLabel: 'zsh',
+              state: 'idle',
+            },
+          },
+        },
+      },
+      workspaceStateByProject: {
+        'project-a': {
+          selectedFilePath: null,
+          terminalPaneSizes: [50, 50],
+          treeExpandedPaths: {},
+        },
+      },
+    })
+
+    const observedSnapshots: Array<{ paneCount: number, sizeCount: number, sizes: number[] }> = []
+    const unsubscribe = useWorkspaceStore.subscribe((state) => {
+      const projectState = state.terminalProjectStateByProject['project-a']
+      const workspaceState = state.workspaceStateByProject['project-a']
+
+      observedSnapshots.push({
+        paneCount: projectState?.paneOrder.length ?? 0,
+        sizeCount: workspaceState?.terminalPaneSizes.length ?? 0,
+        sizes: workspaceState?.terminalPaneSizes ?? [],
+      })
+    })
+
+    await useWorkspaceStore.getState().addTerminalPane('project-a')
+    unsubscribe()
+
+    expect(observedSnapshots).not.toContainEqual({
+      paneCount: 3,
+      sizeCount: 2,
+      sizes: [50, 50],
+    })
+    expect(
+      observedSnapshots.every(({ paneCount, sizeCount }) => paneCount === 0 || paneCount === sizeCount),
+    ).toBe(true)
+    expect(useWorkspaceStore.getState().workspaceStateByProject['project-a']?.terminalPaneSizes).toEqual([
+      33.333333333333336,
+      33.333333333333336,
+      33.333333333333336,
+    ])
+  })
+
+  it('removes an exited pane and rebalances the remaining layout', () => {
+    useWorkspaceStore.setState({
+      terminalProjectStateByProject: {
+        'project-a': {
+          paneOrder: ['main', 'pane-second'],
+          panesById: {
+            main: {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'main',
+              projectId: 'project-a',
+              sessionId: 'session-main',
+              shellLabel: 'zsh',
+              state: 'idle',
+            },
+            'pane-second': {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'pane-second',
+              projectId: 'project-a',
+              sessionId: 'session-second',
+              shellLabel: 'zsh',
+              state: 'running',
+            },
+          },
+        },
+      },
+      workspaceStateByProject: {
+        'project-a': {
+          selectedFilePath: null,
+          terminalPaneSizes: [50, 50],
+          treeExpandedPaths: {},
+        },
+      },
+    })
+
+    useWorkspaceStore.getState().updateTerminalState({
+      paneId: 'pane-second',
+      projectId: 'project-a',
+      sessionId: 'session-second',
+      state: 'exited',
+    })
+
+    expect(useWorkspaceStore.getState().terminalProjectStateByProject['project-a']).toEqual({
+      paneOrder: ['main'],
+      panesById: {
+        main: expect.objectContaining({
+          paneId: 'main',
+          sessionId: 'session-main',
+        }),
+      },
+    })
+    expect(useWorkspaceStore.getState().workspaceStateByProject['project-a']?.terminalPaneSizes).toEqual([
+      100,
+    ])
+  })
+
+  it('allows the final pane to disappear after ctrl+d exits the shell', () => {
+    useWorkspaceStore.setState({
+      terminalProjectStateByProject: {
+        'project-a': {
+          paneOrder: ['main'],
+          panesById: {
+            main: {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'main',
+              projectId: 'project-a',
+              sessionId: 'session-main',
+              shellLabel: 'zsh',
+              state: 'idle',
+            },
+          },
+        },
+      },
+      workspaceStateByProject: {
+        'project-a': {
+          selectedFilePath: null,
+          terminalPaneSizes: [100],
+          treeExpandedPaths: {},
+        },
+      },
+    })
+
+    useWorkspaceStore.getState().updateTerminalState({
+      paneId: 'main',
+      projectId: 'project-a',
+      sessionId: 'session-main',
+      state: 'exited',
+    })
+
+    expect(useWorkspaceStore.getState().terminalProjectStateByProject['project-a']).toEqual({
+      paneOrder: [],
+      panesById: {},
+    })
+    expect(useWorkspaceStore.getState().workspaceStateByProject['project-a']?.terminalPaneSizes).toEqual([])
+  })
+})
+
+describe('workspace store project summaries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetWorkspaceState()
+    isTauriEnvironmentMock.mockReturnValue(true)
+    saveProjectWorkspaceMock.mockResolvedValue(undefined)
+    refreshProjectSnapshotMock.mockResolvedValue({
+      backend: 'xterm',
+      files: [
+        {
+          gitStatus: 'M',
+          kind: 'file',
+          liveStatus: 'modified',
+          path: 'src/App.tsx',
+        },
+        {
+          gitStatus: '?',
+          kind: 'file',
+          liveStatus: 'idle',
+          path: 'README.md',
+        },
+      ],
+      project: {
+        changedFileCount: 2,
+        hasLiveActivity: true,
+        id: 'project-a',
+        name: 'Flowterm',
+        path: '/tmp/flowterm',
+        terminalState: 'idle',
+        untrackedFileCount: 1,
+      },
+    })
+  })
+
+  it('refreshes tab summaries when the active project snapshot changes', async () => {
+    useWorkspaceStore.setState({
+      activeProjectId: 'project-a',
+      projects: [
+        {
+          changedFileCount: 0,
+          hasLiveActivity: false,
+          id: 'project-a',
+          name: 'Flowterm',
+          path: '/tmp/flowterm',
+          terminalState: 'idle',
+          untrackedFileCount: 0,
+        },
+      ],
+      selectedFilePath: 'src/App.tsx',
+      snapshot: {
+        backend: 'xterm',
+        files: [],
+        project: {
+          changedFileCount: 0,
+          hasLiveActivity: false,
+          id: 'project-a',
+          name: 'Flowterm',
+          path: '/tmp/flowterm',
+          terminalState: 'idle',
+          untrackedFileCount: 0,
+        },
+      },
+      workspaceStateByProject: {
+        'project-a': {
+          selectedFilePath: 'src/App.tsx',
+          terminalPaneSizes: [100],
+          treeExpandedPaths: {},
+        },
+      },
+    })
+
+    await useWorkspaceStore.getState().refreshActiveProject('project-a', {
+      changedPaths: ['src/App.tsx'],
+    })
+
+    expect(useWorkspaceStore.getState().projects).toEqual([
+      expect.objectContaining({
+        changedFileCount: 2,
+        hasLiveActivity: true,
+        id: 'project-a',
+        untrackedFileCount: 1,
+      }),
+    ])
+  })
+
+  it('updates tab summaries when terminal state changes', () => {
+    useWorkspaceStore.setState({
+      projects: [
+        {
+          changedFileCount: 0,
+          hasLiveActivity: false,
+          id: 'project-a',
+          name: 'Flowterm',
+          path: '/tmp/flowterm',
+          terminalState: 'idle',
+          untrackedFileCount: 0,
+        },
+      ],
+      terminalProjectStateByProject: {
+        'project-a': {
+          paneOrder: ['main'],
+          panesById: {
+            main: {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'main',
+              projectId: 'project-a',
+              sessionId: 'session-main',
+              shellLabel: 'zsh',
+              state: 'idle',
+            },
+          },
+        },
+      },
+    })
+
+    useWorkspaceStore.getState().updateTerminalState({
+      paneId: 'main',
+      projectId: 'project-a',
+      sessionId: 'session-main',
+      state: 'running',
+    })
+
+    expect(useWorkspaceStore.getState().projects).toEqual([
+      expect.objectContaining({
+        id: 'project-a',
+        terminalState: 'running',
+      }),
+    ])
   })
 })

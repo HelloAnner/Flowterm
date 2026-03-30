@@ -12,6 +12,20 @@ export interface PreviewWindowInput {
   chunkSize: number
 }
 
+export interface PreviewRenderRangeInput {
+  loadedLineCount: number
+  previewStartLine: number
+  scrollTop: number
+  viewportHeight: number
+  rowHeight: number
+  overscanRows: number
+}
+
+export interface PreviewRenderRange {
+  startIndex: number
+  endIndex: number
+}
+
 export interface ImageViewportState {
   scale: number
   offsetX: number
@@ -41,6 +55,35 @@ export function resolvePreviewRequestWindow({
   return {
     lineCount: effectiveChunkSize,
     startLine: Math.min(anchorLine, maxStartLine),
+  }
+}
+
+export function resolvePreviewRenderRange({
+  loadedLineCount,
+  overscanRows,
+  previewStartLine,
+  rowHeight,
+  scrollTop,
+  viewportHeight,
+}: PreviewRenderRangeInput): PreviewRenderRange {
+  if (loadedLineCount <= 0) {
+    return {
+      endIndex: 0,
+      startIndex: 0,
+    }
+  }
+
+  const visibleLineCount = Math.max(Math.ceil(viewportHeight / rowHeight), 1)
+  const bufferedLineCount = visibleLineCount + overscanRows * 2
+  const firstVisibleLine = Math.max(Math.floor(scrollTop / rowHeight), 0)
+  const localFirstVisibleLine = firstVisibleLine - previewStartLine
+  const unclampedStartIndex = localFirstVisibleLine - overscanRows
+  const maxStartIndex = Math.max(loadedLineCount - bufferedLineCount, 0)
+  const startIndex = Math.min(Math.max(unclampedStartIndex, 0), maxStartIndex)
+
+  return {
+    endIndex: Math.min(startIndex + bufferedLineCount, loadedLineCount),
+    startIndex,
   }
 }
 

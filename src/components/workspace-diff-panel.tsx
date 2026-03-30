@@ -11,12 +11,20 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 
 import { ScrollArea } from './ui/scroll-area'
-import { resolvePreviewRequestWindow, createImageViewportState, zoomImageViewport } from '../features/workspace/preview-window'
+import { createFrameScheduler } from '../features/workspace/frame-scheduler'
+import { scheduleIdleTask } from '../features/workspace/idle-task'
+import {
+  resolvePreviewRenderRange,
+  resolvePreviewRequestWindow,
+  createImageViewportState,
+  zoomImageViewport,
+} from '../features/workspace/preview-window'
 import {
   resolveCodeFenceSyntax,
   resolvePreviewSyntax,
+  resolveSyntaxTheme,
+  shouldDelaySyntaxHighlight,
   type PreviewSyntax,
-  warmSyntaxTheme,
 } from '../features/workspace/preview-syntax'
 import { cn } from '../lib/utils'
 import type { FilePreview, GitStatusCode, LiveStatus } from '../lib/contracts'
@@ -26,6 +34,7 @@ interface WorkspaceDiffPanelProps {
   onRequestWindow: (startLine: number, lineCount: number) => void
   preview: FilePreview | null
   selectedFilePath: string | null
+  syntaxThemeId: string
 }
 
 export function WorkspaceDiffPanel({
@@ -33,8 +42,13 @@ export function WorkspaceDiffPanel({
   onRequestWindow,
   preview,
   selectedFilePath,
+  syntaxThemeId,
 }: WorkspaceDiffPanelProps): ReactElement {
   const deferredPreview = useDeferredValue(preview)
+  const syntaxTheme = useMemo(
+    () => resolveSyntaxTheme(syntaxThemeId),
+    [syntaxThemeId],
+  )
   const syntax = useMemo(
     () => (deferredPreview ? resolvePreviewSyntax(deferredPreview.path) : null),
     [deferredPreview],
@@ -72,13 +86,14 @@ export function WorkspaceDiffPanel({
           <ImagePreview key={deferredPreview.path} preview={deferredPreview} />
         ) : syntax?.isMarkdown &&
           deferredPreview.totalLines === deferredPreview.lines.length ? (
-          <MarkdownPreview preview={deferredPreview} />
+          <MarkdownPreview preview={deferredPreview} syntaxTheme={syntaxTheme} />
         ) : (
           <VirtualizedPreview
             key={deferredPreview.path}
             onRequestWindow={onRequestWindow}
             preview={deferredPreview}
             syntax={syntax ?? resolvePreviewSyntax(deferredPreview.path)}
+            syntaxTheme={syntaxTheme}
           />
         )
       ) : (
@@ -159,7 +174,7 @@ function ImagePreview({
           <img
             alt={preview.path}
             className={cn(
-              'h-auto max-w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] object-contain shadow-[0_24px_80px_rgba(0,0,0,0.28)] transition-transform',
+              'h-auto max-w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] object-contain shadow-[var(--surface-shadow)] transition-transform',
               viewport.scale > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in',
             )}
             loading="lazy"
@@ -207,14 +222,48 @@ function VirtualizedPreview({
   onRequestWindow,
   preview,
   syntax,
+  syntaxTheme,
 }: {
   onRequestWindow: (startLine: number, lineCount: number) => void
   preview: FilePreview
   syntax: PreviewSyntax
+  syntaxTheme: ReturnType<typeof resolveSyntaxTheme>
 }): ReactElement {
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
+  const [warmedSyntaxPath, setWarmedSyntaxPath] = useState<string | null>(() =>
+    shouldDelaySyntaxHighlight(syntax) ? null : preview.path,
+  )
+  const viewportMetricsRef = useRef({
+    scrollTop: 0,
+    viewportHeight: ROW_HEIGHT * 24,
+  })
+  const isSyntaxWarm =
+    !shouldDelaySyntaxHighlight(syntax) || warmedSyntaxPath === preview.path
+  const [renderRange, setRenderRange] = useState(() =>
+    resolvePreviewRenderRange({
+      loadedLineCount: preview.lines.length,
+      overscanRows: OVERSCAN_ROWS,
+      previewStartLine: preview.startLine,
+      rowHeight: ROW_HEIGHT,
+      scrollTop: 0,
+      viewportHeight: ROW_HEIGHT * 24,
+    }),
+  )
+
+  useEffect(() => {
+    if (!shouldDelaySyntaxHighlight(syntax)) {
+      return
+    }
+
+    const targetPath = preview.path
+    const scheduled = scheduleIdleTask(() => {
+      setWarmedSyntaxPath(targetPath)
+    })
+
+    return () => {
+      scheduled.cancel()
+    }
+  }, [preview.path, syntax])
 
   useEffect(() => {
     const viewport = viewportRef.current
@@ -223,12 +272,56 @@ function VirtualizedPreview({
       return
     }
 
-    const syncScroll = () => {
-      setScrollTop(viewport.scrollTop)
-    }
+    const syncViewportState = () => {
+      const nextRenderRange = resolvePreviewRenderRange({
+        loadedLineCount: preview.lines.length,
+        overscanRows: OVERSCAN_ROWS,
+        previewStartLine: preview.startLine,
+        rowHeight: ROW_HEIGHT,
+        scrollTop: viewportMetricsRef.current.scrollTop,
+        viewportHeight:
+          viewportMetricsRef.current.viewportHeight || ROW_HEIGHT * 24,
+      })
 
+      setRenderRange((current) =>
+        current.startIndex === nextRenderRange.startIndex &&
+        current.endIndex === nextRenderRange.endIndex
+          ? current
+          : nextRenderRange,
+      )
+
+      if (preview.mode === 'image' || preview.totalLines <= preview.lines.length) {
+        return
+      }
+
+      const nextWindow = resolvePreviewRequestWindow({
+        chunkSize: 200,
+        overscanRows: OVERSCAN_ROWS,
+        rowHeight: ROW_HEIGHT,
+        scrollTop: viewportMetricsRef.current.scrollTop,
+        totalLines: preview.totalLines,
+        viewportHeight:
+          viewportMetricsRef.current.viewportHeight || ROW_HEIGHT * 24,
+      })
+
+      if (
+        nextWindow.startLine === preview.startLine &&
+        preview.startLine + preview.lines.length >=
+          Math.min(nextWindow.startLine + nextWindow.lineCount, preview.totalLines)
+      ) {
+        return
+      }
+
+      onRequestWindow(nextWindow.startLine, nextWindow.lineCount)
+    }
+    const frameScheduler = createFrameScheduler(syncViewportState)
+    const syncScroll = () => {
+      viewportMetricsRef.current.scrollTop = viewport.scrollTop
+      frameScheduler.trigger()
+    }
     const syncHeight = () => {
-      setViewportHeight(viewport.clientHeight)
+      viewportMetricsRef.current.viewportHeight = viewport.clientHeight
+      frameScheduler.trigger()
     }
 
     syncScroll()
@@ -239,6 +332,7 @@ function VirtualizedPreview({
     if (typeof ResizeObserver === 'undefined') {
       return () => {
         viewport.removeEventListener('scroll', syncScroll)
+        frameScheduler.cancel()
       }
     }
 
@@ -250,51 +344,28 @@ function VirtualizedPreview({
     return () => {
       viewport.removeEventListener('scroll', syncScroll)
       resizeObserver.disconnect()
+      frameScheduler.cancel()
     }
-  }, [preview.path])
-
-  useEffect(() => {
-    if (preview.mode !== 'text' || preview.totalLines <= preview.lines.length) {
-      return
-    }
-
-    const nextWindow = resolvePreviewRequestWindow({
-      chunkSize: 200,
-      overscanRows: OVERSCAN_ROWS,
-      rowHeight: ROW_HEIGHT,
-      scrollTop,
-      totalLines: preview.totalLines,
-      viewportHeight: viewportHeight || ROW_HEIGHT * 24,
-    })
-
-    if (
-      nextWindow.startLine === preview.startLine &&
-      preview.startLine + preview.lines.length >=
-        Math.min(nextWindow.startLine + nextWindow.lineCount, preview.totalLines)
-    ) {
-      return
-    }
-
-    onRequestWindow(nextWindow.startLine, nextWindow.lineCount)
   }, [
     onRequestWindow,
     preview.lines.length,
     preview.mode,
+    preview.path,
     preview.startLine,
     preview.totalLines,
-    scrollTop,
-    viewportHeight,
   ])
 
   const { offsetTop, visibleLines } = useMemo(() => {
+    const slicedLines = preview.lines.slice(renderRange.startIndex, renderRange.endIndex)
+
     return {
-      offsetTop: preview.startLine * ROW_HEIGHT,
-      visibleLines: preview.lines.map((line, index) => ({
-        index: preview.startLine + index,
+      offsetTop: (preview.startLine + renderRange.startIndex) * ROW_HEIGHT,
+      visibleLines: slicedLines.map((line, index) => ({
+        index: preview.startLine + renderRange.startIndex + index,
         line,
       })),
     }
-  }, [preview.lines, preview.startLine])
+  }, [preview.lines, preview.startLine, renderRange.endIndex, renderRange.startIndex])
 
   return (
     <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
@@ -308,8 +379,8 @@ function VirtualizedPreview({
               <div
                 className={cn(
                   'grid h-6 grid-cols-[72px_72px_minmax(0,1fr)]',
-                  line.kind === 'added' && 'bg-[rgba(122,158,138,0.12)]',
-                  line.kind === 'removed' && 'bg-[rgba(160,96,80,0.12)]',
+                  line.kind === 'added' && 'bg-[var(--diff-added-bg)]',
+                  line.kind === 'removed' && 'bg-[var(--diff-removed-bg)]',
                 )}
                 key={`${preview.path}-${index}`}
               >
@@ -326,7 +397,12 @@ function VirtualizedPreview({
                     {line.content}
                   </pre>
                 ) : (
-                  <CodeLine content={line.content} syntax={syntax} />
+                  <CodeLine
+                    content={line.content}
+                    shouldHighlight={isSyntaxWarm}
+                    syntax={syntax}
+                    syntaxTheme={syntaxTheme}
+                  />
                 )}
               </div>
             ) : (
@@ -335,7 +411,12 @@ function VirtualizedPreview({
                 key={`${preview.path}-${index}`}
               >
                 <LineNumberCell number={line.newLineNumber} tone="default" />
-                <CodeLine content={line.content} syntax={syntax} />
+                <CodeLine
+                  content={line.content}
+                  shouldHighlight={isSyntaxWarm}
+                  syntax={syntax}
+                  syntaxTheme={syntaxTheme}
+                />
               </div>
             ),
           )}
@@ -377,9 +458,9 @@ function StatusBadge({
     <span
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-2 py-1',
-        gitStatus === 'A' && 'border-[rgba(122,158,138,0.3)] text-[var(--accent-sage)]',
-        gitStatus === 'D' && 'border-[rgba(160,96,80,0.3)] text-[var(--accent-clay)]',
-        gitStatus === 'M' && 'border-[rgba(200,169,110,0.3)] text-[var(--accent-amber)]',
+        gitStatus === 'A' && 'border-[var(--status-added-border)] text-[var(--accent-sage)]',
+        gitStatus === 'D' && 'border-[var(--status-removed-border)] text-[var(--accent-clay)]',
+        gitStatus === 'M' && 'border-[var(--status-modified-border)] text-[var(--accent-amber)]',
         gitStatus === '?' && 'border-[var(--border-default)] text-[var(--text-secondary)]',
         gitStatus === ' ' &&
           'border-[var(--border-default)] text-[var(--text-muted)]',
@@ -402,8 +483,8 @@ function LineNumberCell({
     <div
       className={cn(
         'px-3 text-right text-[var(--text-muted)]',
-        tone === 'added' && 'bg-[rgba(122,158,138,0.25)] text-[var(--text-primary)]',
-        tone === 'removed' && 'bg-[rgba(160,96,80,0.25)] text-[var(--text-primary)]',
+        tone === 'added' && 'bg-[var(--status-added-bg)] text-[var(--text-primary)]',
+        tone === 'removed' && 'bg-[var(--status-removed-bg)] text-[var(--text-primary)]',
       )}
     >
       {number ?? ''}
@@ -411,12 +492,18 @@ function LineNumberCell({
   )
 }
 
-function MarkdownPreview({ preview }: { preview: FilePreview }): ReactElement {
+function MarkdownPreview({
+  preview,
+  syntaxTheme,
+}: {
+  preview: FilePreview
+  syntaxTheme: ReturnType<typeof resolveSyntaxTheme>
+}): ReactElement {
   const content = preview.lines.map((l) => l.content).join('\n')
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <div className="md-prose px-8 py-6">
+      <div className="md-prose md-prose--full-width px-8 py-6">
         <ReactMarkdown
           components={{
             code({ children, className }) {
@@ -437,7 +524,7 @@ function MarkdownPreview({ preview }: { preview: FilePreview }): ReactElement {
                   customStyle={syntaxHighlighterStyle}
                   language={syntax.language}
                   PreTag="div"
-                  style={warmSyntaxTheme}
+                  style={syntaxTheme}
                   wrapLongLines
                 >
                   {String(children).replace(/\n$/, '')}
@@ -463,7 +550,7 @@ function SyntaxBadge({
   const label = preview.mode === 'image' ? 'Image' : (syntax?.label ?? 'Plain Text')
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(123,167,200,0.18)] bg-[rgba(123,167,200,0.08)] px-2 py-1 text-[var(--accent-glow)]">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--info-badge-border)] bg-[var(--info-badge-bg)] px-2 py-1 text-[var(--accent-glow)]">
       {label}
     </span>
   )
@@ -471,12 +558,16 @@ function SyntaxBadge({
 
 function CodeLine({
   content,
+  shouldHighlight,
   syntax,
+  syntaxTheme,
 }: {
   content: string
+  shouldHighlight: boolean
   syntax: PreviewSyntax
+  syntaxTheme: ReturnType<typeof resolveSyntaxTheme>
 }): ReactElement {
-  if (syntax.isPlainText) {
+  if (syntax.isPlainText || !shouldHighlight) {
     return <pre className="overflow-x-auto px-4 py-0 text-[var(--text-primary)]">{content}</pre>
   }
 
@@ -486,7 +577,7 @@ function CodeLine({
       customStyle={syntaxHighlighterStyle}
       language={syntax.language}
       PreTag="div"
-      style={warmSyntaxTheme}
+      style={syntaxTheme}
       wrapLongLines
     >
       {content.length > 0 ? content : ' '}

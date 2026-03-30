@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import type { TerminalAttachment, TerminalStateEvent } from '../../lib/contracts'
+import type {
+  AgentStatusEvent,
+  TerminalAttachment,
+  TerminalStateEvent,
+} from '../../lib/contracts'
 import {
   applyTerminalAttachment,
   buildTerminalPaneDescriptors,
   removeTerminalPane,
   type TerminalProjectState,
+  updateAgentStatus,
   updateTerminalState,
 } from './terminal-panes'
 
@@ -16,6 +21,10 @@ const primaryAttachment: TerminalAttachment = {
   projectId: 'project-a',
   sessionId: 'session-main',
   shellLabel: 'zsh',
+  agentStatus: {
+    agent: 'unknown',
+    phase: 'idle',
+  },
   state: 'idle',
 }
 
@@ -26,6 +35,10 @@ const splitAttachment: TerminalAttachment = {
   projectId: 'project-a',
   sessionId: 'session-split',
   shellLabel: 'zsh',
+  agentStatus: {
+    agent: 'claude-code',
+    phase: 'running',
+  },
   state: 'running',
 }
 
@@ -41,12 +54,20 @@ describe('terminal pane state', () => {
       cwd: '/Users/anner/Flowterm',
       history: '$ pwd\n/Users/anner/Flowterm\n',
       sessionId: 'session-main',
+      agentStatus: {
+        agent: 'unknown',
+        phase: 'idle',
+      },
       state: 'idle',
     })
     expect(state.panesById['pane-split']).toMatchObject({
       cwd: '/Users/anner/Flowterm/src',
       history: '$ git status --short\n M src/App.tsx\n',
       sessionId: 'session-split',
+      agentStatus: {
+        agent: 'claude-code',
+        phase: 'running',
+      },
       state: 'running',
     })
   })
@@ -70,12 +91,45 @@ describe('terminal pane state', () => {
     expect(state.panesById['pane-main']).toMatchObject({
       cwd: '/Users/anner/Flowterm',
       history: '$ pwd\n/Users/anner/Flowterm\n',
+      agentStatus: {
+        agent: 'unknown',
+        phase: 'idle',
+      },
       state: 'idle',
     })
     expect(state.panesById['pane-split']).toMatchObject({
       cwd: '/Users/anner/Flowterm/src',
       history: '$ git status --short\n M src/App.tsx\n',
+      agentStatus: {
+        agent: 'claude-code',
+        phase: 'running',
+      },
       state: 'attention',
+    })
+  })
+
+  it('applies agent status changes only to the matching pane session', () => {
+    const state = applyTerminalAttachment(
+      applyTerminalAttachment(createProjectState(), primaryAttachment),
+      splitAttachment,
+    )
+    const agentEvent: AgentStatusEvent = {
+      agent: 'claude-code',
+      paneId: 'pane-split',
+      phase: 'completed',
+      projectId: 'project-a',
+      sessionId: 'session-split',
+    }
+
+    const nextState = updateAgentStatus(state, agentEvent)
+
+    expect(nextState.panesById['pane-main']?.agentStatus).toEqual({
+      agent: 'unknown',
+      phase: 'idle',
+    })
+    expect(nextState.panesById['pane-split']?.agentStatus).toEqual({
+      agent: 'claude-code',
+      phase: 'completed',
     })
   })
 
@@ -93,6 +147,10 @@ describe('terminal pane state', () => {
         projectId: 'project-a',
         sessionId: 'session-main',
         shellLabel: 'zsh',
+        agentStatus: {
+          agent: 'unknown',
+          phase: 'idle',
+        },
         state: 'idle',
       },
       {
@@ -102,6 +160,10 @@ describe('terminal pane state', () => {
         projectId: 'project-a',
         sessionId: 'session-split',
         shellLabel: 'zsh',
+        agentStatus: {
+          agent: 'claude-code',
+          phase: 'running',
+        },
         state: 'running',
       },
     ])

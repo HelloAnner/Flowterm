@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   resolvePreviewSyntax,
+  shouldDelaySyntaxHighlight,
   warmSyntaxTheme,
 } from './preview-syntax'
 
@@ -54,5 +55,22 @@ describe('warmSyntaxTheme', () => {
     expect(
       warmSyntaxTheme['pre[class*="language-"]']?.background,
     ).toBe('transparent')
+  })
+})
+
+describe('shouldDelaySyntaxHighlight', () => {
+  it('defers non-plain-text code previews on first paint', () => {
+    expect(
+      shouldDelaySyntaxHighlight(resolvePreviewSyntax('src/App.tsx')),
+    ).toBe(true)
+  })
+
+  it('keeps plain text and markdown previews immediate', () => {
+    expect(
+      shouldDelaySyntaxHighlight(resolvePreviewSyntax('notes/story.txt')),
+    ).toBe(false)
+    expect(
+      shouldDelaySyntaxHighlight(resolvePreviewSyntax('README.md')),
+    ).toBe(false)
   })
 })

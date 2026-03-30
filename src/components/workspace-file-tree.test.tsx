@@ -32,12 +32,31 @@ const files: ProjectFileEntry[] = [
 ]
 
 describe('WorkspaceFileTree', () => {
-  it('renders distinct icons for common file types', () => {
+  it('keeps folders collapsed by default', () => {
     render(
       <WorkspaceFileTree
         expandedPaths={{}}
         files={files}
-        onExpandedPathsChange={vi.fn()}
+        onToggleFolder={vi.fn()}
+        onSelectFile={vi.fn()}
+        selectedFilePath={null}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /src/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /App\.tsx/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /logo\.png/i })).not.toBeInTheDocument()
+  })
+
+  it('renders distinct icons for common file types', () => {
+    render(
+      <WorkspaceFileTree
+        expandedPaths={{
+          assets: true,
+          src: true,
+        }}
+        files={files}
+        onToggleFolder={vi.fn()}
         onSelectFile={vi.fn()}
         selectedFilePath={null}
       />,

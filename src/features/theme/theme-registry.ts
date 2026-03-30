@@ -1,0 +1,151 @@
+import type { CSSProperties } from 'react'
+
+import flowtermWarmDarkData from '../../themes/flowterm-warm-dark.json'
+import githubDarkDefaultData from '../../themes/github-dark-default.json'
+
+export interface TerminalPalette {
+  background: string
+  cursor: string
+  foreground: string
+}
+
+export interface SyntaxPalette {
+  builtin: string
+  className: string
+  comment: string
+  constant: string
+  entity: string
+  function: string
+  keyword: string
+  number: string
+  operator: string
+  property: string
+  punctuation: string
+  regex: string
+  string: string
+  tag: string
+  text: string
+  variable: string
+}
+
+export interface AppTheme {
+  colorScheme: 'dark' | 'light'
+  id: string
+  label: string
+  syntax: SyntaxPalette
+  terminal: TerminalPalette
+  ui: Record<string, string>
+}
+
+type ThemeJsonPayload = Omit<AppTheme, 'colorScheme'> & {
+  colorScheme: string
+}
+
+const themes = [
+  normalizeTheme(flowtermWarmDarkData),
+  normalizeTheme(githubDarkDefaultData),
+]
+
+export const DEFAULT_THEME_ID = 'flowterm-warm-dark'
+export const THEME_STORAGE_KEY = 'flowterm.active-theme'
+
+export function listThemes(): AppTheme[] {
+  return themes
+}
+
+export function getThemeById(themeId: string): AppTheme {
+  return themes.find((theme) => theme.id === themeId) ?? themes[0]
+}
+
+export function resolveThemeCssVariables(theme: AppTheme): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(theme.ui).map(([token, value]) => [`--${token}`, value]),
+  )
+}
+
+export function createSyntaxHighlightTheme(theme: AppTheme): Record<string, CSSProperties> {
+  return {
+    'code[class*="language-"]': {
+      background: 'transparent',
+      color: theme.syntax.text,
+      fontFamily: 'var(--font-mono)',
+      fontSize: '13px',
+      fontWeight: '400',
+      hyphens: 'none',
+      lineHeight: '1.85',
+      tabSize: 2,
+      textShadow: 'none',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      wordSpacing: 'normal',
+    },
+    'pre[class*="language-"]': {
+      background: 'transparent',
+      color: theme.syntax.text,
+      fontFamily: 'var(--font-mono)',
+      fontSize: '13px',
+      lineHeight: '1.85',
+      margin: '0',
+      overflow: 'visible',
+      padding: '0',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    'pre > code[class*="language-"]': {
+      fontSize: '1em',
+    },
+    builtin: { color: theme.syntax.builtin },
+    className: { color: theme.syntax.className },
+    comment: { color: theme.syntax.comment, fontStyle: 'italic' },
+    constant: { color: theme.syntax.constant },
+    entity: { color: theme.syntax.entity },
+    function: { color: theme.syntax.function },
+    keyword: { color: theme.syntax.keyword },
+    number: { color: theme.syntax.number },
+    operator: { color: theme.syntax.operator },
+    property: { color: theme.syntax.property },
+    punctuation: { color: theme.syntax.punctuation },
+    regex: { color: theme.syntax.regex },
+    string: { color: theme.syntax.string },
+    tag: { color: theme.syntax.tag },
+    variable: { color: theme.syntax.variable },
+  }
+}
+
+export function applyThemeToDocument(theme: AppTheme, root?: HTMLElement): void {
+  const target = root ?? document.documentElement
+
+  target.dataset.theme = theme.id
+  target.style.colorScheme = theme.colorScheme
+
+  for (const [token, value] of Object.entries(resolveThemeCssVariables(theme))) {
+    target.style.setProperty(token, value)
+  }
+}
+
+export function readStoredThemeId(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_THEME_ID
+  }
+
+  const storedThemeId = window.localStorage.getItem(THEME_STORAGE_KEY)
+
+  return storedThemeId && themes.some((theme) => theme.id === storedThemeId)
+    ? storedThemeId
+    : DEFAULT_THEME_ID
+}
+
+export function storeThemeId(themeId: string): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(THEME_STORAGE_KEY, getThemeById(themeId).id)
+}
+
+function normalizeTheme(payload: ThemeJsonPayload): AppTheme {
+  return {
+    ...payload,
+    colorScheme: payload.colorScheme === 'light' ? 'light' : 'dark',
+  }
+}

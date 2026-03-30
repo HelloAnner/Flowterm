@@ -24,13 +24,13 @@ export function WorkspaceSidebar({
 
   return (
     <div className="flex h-full min-h-0 bg-[var(--bg-elevated)]">
-      <nav className="flex w-14 shrink-0 flex-col items-center border-r border-[var(--border-subtle)] bg-[linear-gradient(180deg,rgba(200,169,110,0.06),rgba(15,15,15,0))] px-2 py-3">
+      <nav className="flex w-14 shrink-0 flex-col items-center border-r border-[var(--border-subtle)] bg-[var(--sidebar-nav-bg)] px-2 py-3">
         <button
           aria-label={`文件树，${summary.totalFileCount} 个文件，${summary.changedFileCount} 个改动`}
           className={cn(
             'group relative flex w-full flex-col items-center gap-1.5 rounded-2xl border px-1 py-3 text-[var(--text-secondary)] transition-colors',
             selectedView === 'tree'
-              ? 'border-[rgba(200,169,110,0.36)] bg-[rgba(200,169,110,0.09)] text-[var(--text-primary)] shadow-[0_12px_24px_rgba(0,0,0,0.24)]'
+              ? 'border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--text-primary)] shadow-[var(--surface-shadow)]'
               : 'border-transparent hover:border-[var(--border-default)] hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]',
           )}
           onClick={() => onSelectView('tree')}
@@ -38,10 +38,10 @@ export function WorkspaceSidebar({
           type="button"
         >
           {summary.hasLiveActivity ? (
-            <span className="absolute left-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--accent-sage)] shadow-[0_0_10px_rgba(122,158,138,0.85)]" />
+            <span className="absolute left-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--accent-sage)] shadow-[var(--activity-glow)]" />
           ) : null}
           {summary.changedFileCount > 0 ? (
-            <span className="absolute right-1 top-1 rounded-full bg-[rgba(200,169,110,0.18)] px-1.5 py-0.5 font-mono text-[9px] leading-none text-[var(--accent-amber)]">
+            <span className="absolute right-1 top-1 rounded-full bg-[var(--sidebar-badge-bg)] px-1.5 py-0.5 font-mono text-[9px] leading-none text-[var(--accent-amber)]">
               {summary.changedFileCount}
             </span>
           ) : null}

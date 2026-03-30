@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import type {
   AppBootstrap,
+  AgentStatusEvent,
   FilePreview,
   PerformanceProbeReport,
   PerformanceProbeState,
@@ -15,6 +16,7 @@ import type {
 } from './contracts'
 
 export const FLOWTERM_EVENTS = {
+  agentStatus: 'flowterm://agent-status',
   projectRefresh: 'flowterm://project-refresh',
   terminalOutput: 'flowterm://terminal-output',
   terminalState: 'flowterm://terminal-state',
@@ -130,6 +132,14 @@ export async function listenProjectRefresh(
   handler: (event: ProjectRefreshEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<ProjectRefreshEvent>(FLOWTERM_EVENTS.projectRefresh, (event) => {
+    handler(event.payload)
+  })
+}
+
+export async function listenAgentStatus(
+  handler: (event: AgentStatusEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AgentStatusEvent>(FLOWTERM_EVENTS.agentStatus, (event) => {
     handler(event.payload)
   })
 }

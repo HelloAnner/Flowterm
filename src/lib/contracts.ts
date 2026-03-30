@@ -2,7 +2,14 @@ export type GitStatusCode = ' ' | 'A' | 'D' | 'M' | '?'
 
 export type LiveStatus = 'added' | 'deleted' | 'idle' | 'modified'
 
-export type TerminalState = 'attention' | 'idle' | 'running'
+export type TerminalState = 'attention' | 'exited' | 'idle' | 'running'
+export type AgentKind = 'aider' | 'claude-code' | 'unknown'
+export type AgentPhase = 'attention' | 'completed' | 'idle' | 'running'
+
+export interface AgentStatusSnapshot {
+  agent: AgentKind
+  phase: AgentPhase
+}
 
 export interface ProjectFileEntry {
   path: string
@@ -46,6 +53,7 @@ export interface ProjectSnapshot {
 }
 
 export interface TerminalAttachment {
+  agentStatus: AgentStatusSnapshot
   cwd: string | null
   history: string
   paneId: string
@@ -71,6 +79,7 @@ export interface AppBootstrap {
 
 export interface ProjectRefreshEvent {
   projectId: string
+  paths: string[]
 }
 
 export interface TerminalOutputEvent {
@@ -85,6 +94,14 @@ export interface TerminalStateEvent {
   projectId: string
   sessionId: string
   state: TerminalState
+}
+
+export interface AgentStatusEvent {
+  agent: AgentKind
+  paneId: string
+  phase: AgentPhase
+  projectId: string
+  sessionId: string
 }
 
 export interface PerformanceProbeState {

@@ -6,11 +6,17 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { Rows2, X } from 'lucide-react'
 
+import {
+  pickLeadingAgentStatus,
+  resolveAgentStatusCopy,
+} from '../features/workspace/agent-status'
 import { subscribeTerminalOutput } from '../features/workspace/terminal-stream'
+import { createTerminalResizeScheduler } from '../features/workspace/terminal-resize'
 import { cn } from '../lib/utils'
-import type { TerminalState } from '../lib/contracts'
+import type { AgentStatusSnapshot, TerminalState } from '../lib/contracts'
 
 export interface TerminalPaneDescriptor {
+  agentStatus: AgentStatusSnapshot
   cwd: string | null
   id: string
   history: string
@@ -27,6 +33,11 @@ interface WorkspaceTerminalProps {
   paneSizes: number[]
   panes: TerminalPaneDescriptor[]
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
+  theme: {
+    background: string
+    cursor: string
+    foreground: string
+  }
   writeTerminal: (sessionId: string, data: string) => Promise<void>
 }
 
@@ -37,8 +48,12 @@ export function WorkspaceTerminal({
   paneSizes,
   panes,
   resizeTerminal,
+  theme,
   writeTerminal,
 }: WorkspaceTerminalProps): ReactElement {
+  const bannerStatus = pickLeadingAgentStatus(panes.map((pane) => pane.agentStatus))
+  const bannerCopy = bannerStatus ? resolveAgentStatusCopy(bannerStatus) : null
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--terminal-bg)]">
       <div className="flex h-7 shrink-0 items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4">
@@ -54,6 +69,24 @@ export function WorkspaceTerminal({
           </button>
         ) : null}
       </div>
+      {bannerCopy ? (
+        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[rgba(255,255,255,0.02)] px-4">
+          <span
+            aria-hidden="true"
+            className={cn(
+              'h-2 w-2 rounded-full',
+              bannerCopy.tone === 'attention' &&
+                'bg-[var(--accent-amber)] shadow-[0_0_10px_rgba(200,169,110,0.35)]',
+              bannerCopy.tone === 'active' &&
+                'animate-pulse bg-[var(--accent-sage)] shadow-[0_0_10px_rgba(122,158,138,0.35)]',
+              bannerCopy.tone === 'settled' &&
+                'bg-[var(--text-secondary)] shadow-[0_0_8px_rgba(138,134,128,0.18)]',
+            )}
+          />
+          <span className="text-xs font-medium text-[var(--text-primary)]">{bannerCopy.title}</span>
+          <span className="text-[11px] text-[var(--text-secondary)]">{bannerCopy.detail}</span>
+        </div>
+      ) : null}
       <PanelGroup
         className="min-h-0 flex-1"
         direction="vertical"
@@ -64,10 +97,10 @@ export function WorkspaceTerminal({
           [
             index > 0 ? (
               <PanelResizeHandle
-                className="group h-1 shrink-0 bg-[#0a0a0a] data-[resize-handle-active]:bg-[var(--border-subtle)]"
+                className="group h-1 shrink-0 bg-[var(--terminal-divider)] data-[resize-handle-active]:bg-[var(--border-subtle)]"
                 key={`handle-${pane.id}`}
               >
-                <span className="block h-px bg-[#1c1c1c] group-hover:bg-[var(--border-subtle)]" />
+                <span className="block h-px bg-[var(--terminal-divider-strong)] group-hover:bg-[var(--border-subtle)]" />
               </PanelResizeHandle>
             ) : null,
             <Panel
@@ -79,6 +112,7 @@ export function WorkspaceTerminal({
                 onRemove={panes.length > 1 ? () => onRemovePane(pane.id) : null}
                 pane={pane}
                 resizeTerminal={resizeTerminal}
+                theme={theme}
                 writeTerminal={writeTerminal}
               />
             </Panel>,
@@ -93,6 +127,11 @@ interface TerminalPaneProps {
   onRemove: (() => void) | null
   pane: TerminalPaneDescriptor
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
+  theme: {
+    background: string
+    cursor: string
+    foreground: string
+  }
   writeTerminal: (sessionId: string, data: string) => Promise<void>
 }
 
@@ -100,10 +139,12 @@ function TerminalPane({
   onRemove,
   pane,
   resizeTerminal,
+  theme,
   writeTerminal,
 }: TerminalPaneProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const resizeSchedulerRef = useRef<ReturnType<typeof createTerminalResizeScheduler> | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
 
@@ -118,13 +159,12 @@ function TerminalPane({
         '"Berkeley Mono", "Geist Mono", "JetBrains Mono", ui-monospace, monospace',
       fontSize: 13,
       lineHeight: 1.6,
-      theme: {
-        background: '#0F0F0F',
-        cursor: '#C8A96E',
-        foreground: '#E8E3DC',
-      },
+      theme,
     })
     const fitAddon = new FitAddon()
+    const scheduleResize = createTerminalResizeScheduler((dimensions) => {
+      void resizeTerminal(pane.sessionId, dimensions.cols, dimensions.rows)
+    })
 
     terminal.loadAddon(fitAddon)
     terminal.open(containerRef.current)
@@ -143,19 +183,25 @@ function TerminalPane({
       const dimensions = fitAddon.proposeDimensions()
 
       if (dimensions) {
-        void resizeTerminal(pane.sessionId, dimensions.cols, dimensions.rows)
+        scheduleResize({
+          cols: dimensions.cols,
+          rows: dimensions.rows,
+        })
       }
     })
 
     observer.observe(containerRef.current)
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+    resizeSchedulerRef.current = scheduleResize
 
     return () => {
       observer.disconnect()
+      scheduleResize.cancel()
+      resizeSchedulerRef.current = null
       terminal.dispose()
     }
-  }, [pane.sessionId, resizeTerminal, writeTerminal])
+  }, [pane.sessionId, resizeTerminal, theme, writeTerminal])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -175,7 +221,10 @@ function TerminalPane({
       const dimensions = fitAddon.proposeDimensions()
 
       if (dimensions) {
-        void resizeTerminal(pane.sessionId, dimensions.cols, dimensions.rows)
+        resizeSchedulerRef.current?.({
+          cols: dimensions.cols,
+          rows: dimensions.rows,
+        })
       }
     }
   }, [pane.history, pane.sessionId, resizeTerminal])
@@ -223,6 +272,9 @@ function resolveTerminalLabel(state: TerminalState): string {
   if (state === 'attention') {
     return '等待你的输入'
   }
+  if (state === 'exited') {
+    return '已关闭'
+  }
   if (state === 'running') {
     return '运行中'
   }
@@ -232,6 +284,9 @@ function resolveTerminalLabel(state: TerminalState): string {
 function resolveTerminalTone(state: TerminalState): string {
   if (state === 'attention') {
     return 'text-[var(--accent-amber)]'
+  }
+  if (state === 'exited') {
+    return 'text-[var(--accent-clay)]'
   }
   if (state === 'running') {
     return 'text-[var(--accent-sage)]'

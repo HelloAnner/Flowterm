@@ -31,6 +31,8 @@ export function WorkspaceTabBar({
       <div className="flex min-w-0 flex-1 items-stretch">
         {projects.map((project) => {
           const isActive = project.id === activeProjectId
+          const showsRunningIndicator = project.terminalState === 'running'
+          const showsDirtyIndicator = project.changedFileCount > 0
 
           return (
             <button
@@ -45,11 +47,22 @@ export function WorkspaceTabBar({
               type="button"
             >
               <span className="truncate font-mono">{project.name}</span>
-              {project.hasLiveActivity ? (
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-sage)] shadow-[0_0_6px_rgba(122,158,138,0.7)]" />
+              {showsRunningIndicator ? (
+                <span
+                  aria-label="Agent 运行中"
+                  className="relative flex h-2.5 w-2.5 items-center justify-center"
+                  role="img"
+                >
+                  <span className="absolute h-2.5 w-2.5 rounded-full bg-[var(--activity-halo)] animate-pulse" />
+                  <span className="relative h-1.5 w-1.5 rounded-full bg-[var(--accent-sage)] shadow-[var(--activity-glow)]" />
+                </span>
               ) : null}
-              {project.changedFileCount > 0 ? (
-                <span className="text-[10px] text-[var(--accent-amber)]">✦</span>
+              {showsDirtyIndicator ? (
+                <span
+                  aria-label="未提交改动"
+                  className="h-1.5 w-1.5 rounded-full bg-[var(--accent-amber)] shadow-[var(--dirty-glow)]"
+                  role="img"
+                />
               ) : null}
               <span
                 className="ml-0.5 rounded p-0.5 text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-overlay)] hover:text-[var(--text-secondary)] group-hover:opacity-100"

@@ -9,20 +9,27 @@ use std::{
 
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::{
-    models::{TerminalAttachment, TerminalOutputEvent, TerminalState, TerminalStateEvent},
-    state::ProjectRegistry,
+    agent_detector::AgentDetector,
+    models::{
+        AgentPhase, AgentStatusEvent, AgentStatusSnapshot, TerminalAttachment, TerminalOutputEvent,
+        TerminalState, TerminalStateEvent,
+    },
+    state::{FlowtermState, ProjectRegistry},
 };
 
 const CWD_MARKER_PREFIX: &str = "\u{1b}]133;CurrentDir=";
+const PROMPT_MARKER_PREFIX: &str = "\u{1b}]133;PromptReady=";
 const MAX_HISTORY_CHARS: usize = 40_000;
+const AGENT_STATUS_EVENT: &str = "flowterm://agent-status";
 const TERMINAL_OUTPUT_EVENT: &str = "flowterm://terminal-output";
 const TERMINAL_STATE_EVENT: &str = "flowterm://terminal-state";
 
 pub struct TerminalSession {
+    agent_status: Arc<Mutex<AgentStatusSnapshot>>,
     child: Box<dyn portable_pty::Child + Send>,
     current_cwd: Arc<Mutex<String>>,
     history: Arc<Mutex<String>>,
@@ -96,6 +103,7 @@ impl TerminalManager {
             .context("terminal session not found after creation")?;
 
         Ok(TerminalAttachment {
+            agent_status: session.agent_status.lock().unwrap().clone(),
             cwd: Some(session.current_cwd.lock().unwrap().clone()),
             history: session.history.lock().unwrap().clone(),
             pane_id: session.pane_id.clone(),
@@ -214,13 +222,18 @@ fn create_session(
         .and_then(|value| value.to_str())
         .unwrap_or("shell")
         .to_string();
-    let (command, hook_path) = build_shell_command(&shell, &shell_label, &session_cwd, &session_id)?;
+    let (command, hook_path) =
+        build_shell_command(&shell, &shell_label, &session_cwd, &session_id)?;
     let child = pair.slave.spawn_command(command)?;
     let writer = pair.master.take_writer()?;
     let mut reader = pair.master.try_clone_reader()?;
+    let agent_detector = Arc::new(Mutex::new(AgentDetector::default()));
+    let agent_status = Arc::new(Mutex::new(AgentStatusSnapshot::default()));
     let history = Arc::new(Mutex::new(String::new()));
     let current_cwd = Arc::new(Mutex::new(session_cwd.to_string_lossy().to_string()));
     let state = Arc::new(Mutex::new(TerminalState::Idle));
+    let agent_detector_ref = Arc::clone(&agent_detector);
+    let agent_status_ref = Arc::clone(&agent_status);
     let current_cwd_ref = Arc::clone(&current_cwd);
     let history_ref = Arc::clone(&history);
     let state_ref = Arc::clone(&state);
@@ -239,35 +252,44 @@ fn create_session(
             };
 
             if read == 0 {
-                let should_emit_idle = if let Ok(mut current_state) = state_ref.lock() {
-                    if *current_state == TerminalState::Idle {
+                let should_emit_exit = if let Ok(mut current_state) = state_ref.lock() {
+                    if *current_state == TerminalState::Exited {
                         false
                     } else {
-                        *current_state = TerminalState::Idle;
+                        *current_state = TerminalState::Exited;
                         true
                     }
                 } else {
                     false
                 };
 
-                if should_emit_idle {
+                if should_emit_exit {
                     let _ = app_ref.emit(
                         TERMINAL_STATE_EVENT,
                         TerminalStateEvent {
                             pane_id: pane_id_ref.clone(),
                             project_id: project_id_ref.clone(),
                             session_id: session_id_ref.clone(),
-                            state: TerminalState::Idle,
+                            state: TerminalState::Exited,
                         },
+                    );
+                }
+
+                let flowterm_state = app_ref.state::<FlowtermState>();
+                if let Ok(mut terminals) = flowterm_state.terminals.lock() {
+                    terminals.close(
+                        flowterm_state.registry.clone(),
+                        &project_id_ref,
+                        &session_id_ref,
                     );
                 }
                 break;
             }
 
             let raw_chunk = String::from_utf8_lossy(&buffer[..read]).to_string();
-            let (chunk, next_cwd) = strip_cwd_markers(&raw_chunk);
+            let (chunk, markers) = strip_terminal_markers(&raw_chunk);
 
-            if let Some(cwd) = next_cwd {
+            if let Some(cwd) = markers.cwd {
                 if let Ok(mut current_cwd) = current_cwd_ref.lock() {
                     *current_cwd = cwd.clone();
                 }
@@ -280,12 +302,33 @@ fn create_session(
                 }
             }
 
-            if chunk.is_empty() {
-                continue;
-            }
+            let next_agent_status = if let Ok(mut detector) = agent_detector_ref.lock() {
+                let mut next = detector.current();
 
-            push_history(&history_ref, &chunk);
-            let next_state = detect_state(&chunk);
+                if markers.prompt_ready {
+                    next = detector.observe_prompt();
+                }
+
+                if !chunk.is_empty() {
+                    next = detector.ingest(&chunk);
+                }
+
+                next
+            } else {
+                AgentStatusSnapshot::default()
+            };
+            let should_emit_agent_status =
+                if let Ok(mut current_agent_status) = agent_status_ref.lock() {
+                    if *current_agent_status == next_agent_status {
+                        false
+                    } else {
+                        *current_agent_status = next_agent_status.clone();
+                        true
+                    }
+                } else {
+                    false
+                };
+            let next_state = terminal_state_for_agent_status(&next_agent_status);
             let should_emit_state = if let Ok(mut current_state) = state_ref.lock() {
                 if *current_state == next_state {
                     false
@@ -297,15 +340,36 @@ fn create_session(
                 false
             };
 
-            let _ = app_ref.emit(
-                TERMINAL_OUTPUT_EVENT,
-                TerminalOutputEvent {
-                    pane_id: pane_id_ref.clone(),
-                    project_id: project_id_ref.clone(),
-                    session_id: session_id_ref.clone(),
-                    chunk,
-                },
-            );
+            if chunk.is_empty() && !should_emit_agent_status && !should_emit_state {
+                continue;
+            }
+
+            if !chunk.is_empty() {
+                push_history(&history_ref, &chunk);
+                let _ = app_ref.emit(
+                    TERMINAL_OUTPUT_EVENT,
+                    TerminalOutputEvent {
+                        pane_id: pane_id_ref.clone(),
+                        project_id: project_id_ref.clone(),
+                        session_id: session_id_ref.clone(),
+                        chunk,
+                    },
+                );
+            }
+
+            if should_emit_agent_status {
+                let _ = app_ref.emit(
+                    AGENT_STATUS_EVENT,
+                    AgentStatusEvent {
+                        agent: next_agent_status.agent,
+                        pane_id: pane_id_ref.clone(),
+                        phase: next_agent_status.phase,
+                        project_id: project_id_ref.clone(),
+                        session_id: session_id_ref.clone(),
+                    },
+                );
+            }
+
             if should_emit_state {
                 let _ = app_ref.emit(
                     TERMINAL_STATE_EVENT,
@@ -321,6 +385,7 @@ fn create_session(
     });
 
     Ok(TerminalSession {
+        agent_status,
         child,
         current_cwd,
         history,
@@ -371,7 +436,9 @@ fn build_zsh_command(
     session_cwd: &Path,
     session_id: &str,
 ) -> Result<(CommandBuilder, Option<PathBuf>)> {
-    let hook_dir = env::temp_dir().join("flowterm-shell-hooks").join(session_id);
+    let hook_dir = env::temp_dir()
+        .join("flowterm-shell-hooks")
+        .join(session_id);
     fs::create_dir_all(&hook_dir)?;
     let original_zdotdir = env::var("ZDOTDIR")
         .ok()
@@ -381,9 +448,7 @@ fn build_zsh_command(
 
     fs::write(
         &hook_file,
-        format!(
-            "if [ -n \"$FLOWTERM_ORIGINAL_ZDOTDIR\" ] && [ -r \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\" ]; then\n  source \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\"\nelif [ -r \"$HOME/.zshrc\" ]; then\n  source \"$HOME/.zshrc\"\nfi\nfunction __flowterm_emit_cwd() {{\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}}\nautoload -Uz add-zsh-hook 2>/dev/null\nadd-zsh-hook precmd __flowterm_emit_cwd\n__flowterm_emit_cwd\n"
-        ),
+        "if [ -n \"$FLOWTERM_ORIGINAL_ZDOTDIR\" ] && [ -r \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\" ]; then\n  source \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\"\nelif [ -r \"$HOME/.zshrc\" ]; then\n  source \"$HOME/.zshrc\"\nfi\nfunction __flowterm_emit_cwd() {\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}\nfunction __flowterm_emit_prompt_ready() {\n  printf '\\033]133;PromptReady=1\\a'\n}\nautoload -Uz add-zsh-hook 2>/dev/null\nadd-zsh-hook precmd __flowterm_emit_prompt_ready\nadd-zsh-hook precmd __flowterm_emit_cwd\n__flowterm_emit_prompt_ready\n__flowterm_emit_cwd\n",
     )?;
 
     let mut command = CommandBuilder::new(shell);
@@ -400,7 +465,9 @@ fn build_bash_command(
     session_cwd: &Path,
     session_id: &str,
 ) -> Result<(CommandBuilder, Option<PathBuf>)> {
-    let hook_dir = env::temp_dir().join("flowterm-shell-hooks").join(session_id);
+    let hook_dir = env::temp_dir()
+        .join("flowterm-shell-hooks")
+        .join(session_id);
     fs::create_dir_all(&hook_dir)?;
     let hook_file = hook_dir.join("flowterm.bashrc");
     let original_bashrc = env::var("HOME")
@@ -412,9 +479,7 @@ fn build_bash_command(
 
     fs::write(
         &hook_file,
-        format!(
-            "if [ -n \"$FLOWTERM_ORIGINAL_BASHRC\" ] && [ -r \"$FLOWTERM_ORIGINAL_BASHRC\" ]; then\n  source \"$FLOWTERM_ORIGINAL_BASHRC\"\nelif [ -r \"$HOME/.bashrc\" ]; then\n  source \"$HOME/.bashrc\"\nfi\n__flowterm_emit_cwd() {{\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}}\nPROMPT_COMMAND=\"__flowterm_emit_cwd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"\n__flowterm_emit_cwd\n"
-        ),
+        "if [ -n \"$FLOWTERM_ORIGINAL_BASHRC\" ] && [ -r \"$FLOWTERM_ORIGINAL_BASHRC\" ]; then\n  source \"$FLOWTERM_ORIGINAL_BASHRC\"\nelif [ -r \"$HOME/.bashrc\" ]; then\n  source \"$HOME/.bashrc\"\nfi\n__flowterm_emit_cwd() {\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}\n__flowterm_emit_prompt_ready() {\n  printf '\\033]133;PromptReady=1\\a'\n}\nPROMPT_COMMAND=\"__flowterm_emit_prompt_ready;__flowterm_emit_cwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n__flowterm_emit_prompt_ready\n__flowterm_emit_cwd\n",
     )?;
 
     let mut command = CommandBuilder::new(shell);
@@ -427,12 +492,16 @@ fn build_bash_command(
     Ok((command, Some(hook_dir)))
 }
 
-fn detect_state(chunk: &str) -> TerminalState {
-    if chunk.to_lowercase().contains("waiting for your input") {
+fn terminal_state_for_agent_status(status: &AgentStatusSnapshot) -> TerminalState {
+    if status.phase == AgentPhase::Attention {
         return TerminalState::Attention;
     }
 
-    TerminalState::Running
+    if status.phase == AgentPhase::Running {
+        return TerminalState::Running;
+    }
+
+    TerminalState::Idle
 }
 
 fn find_marker_terminator(input: &str) -> Option<(usize, usize)> {
@@ -470,17 +539,30 @@ fn resolve_session_cwd(project_path: &Path, cwd: Option<&str>) -> PathBuf {
     project_path.to_path_buf()
 }
 
-fn strip_cwd_markers(chunk: &str) -> (String, Option<String>) {
+#[derive(Default)]
+struct TerminalMarkers {
+    cwd: Option<String>,
+    prompt_ready: bool,
+}
+
+fn strip_terminal_markers(chunk: &str) -> (String, TerminalMarkers) {
     let mut cleaned = String::new();
     let mut remaining = chunk;
-    let mut latest_cwd = None;
+    let mut markers = TerminalMarkers::default();
 
     loop {
-        let Some(start) = remaining.find(CWD_MARKER_PREFIX) else {
+        let next_cwd = remaining.find(CWD_MARKER_PREFIX);
+        let next_prompt = remaining.find(PROMPT_MARKER_PREFIX);
+        let Some((start, marker_kind)) = next_marker(next_cwd, next_prompt) else {
             cleaned.push_str(remaining);
             break;
         };
-        let marker_start = start + CWD_MARKER_PREFIX.len();
+
+        let marker_start = start
+            + match marker_kind {
+                MarkerKind::Cwd => CWD_MARKER_PREFIX.len(),
+                MarkerKind::Prompt => PROMPT_MARKER_PREFIX.len(),
+            };
         cleaned.push_str(&remaining[..start]);
         let after_prefix = &remaining[marker_start..];
         let Some((terminator_start, terminator_end)) = find_marker_terminator(after_prefix) else {
@@ -488,9 +570,36 @@ fn strip_cwd_markers(chunk: &str) -> (String, Option<String>) {
             break;
         };
 
-        latest_cwd = Some(after_prefix[..terminator_start].to_string());
+        match marker_kind {
+            MarkerKind::Cwd => {
+                markers.cwd = Some(after_prefix[..terminator_start].to_string());
+            }
+            MarkerKind::Prompt => {
+                markers.prompt_ready = true;
+            }
+        }
         remaining = &after_prefix[terminator_end..];
     }
 
-    (cleaned, latest_cwd)
+    (cleaned, markers)
+}
+
+enum MarkerKind {
+    Cwd,
+    Prompt,
+}
+
+fn next_marker(next_cwd: Option<usize>, next_prompt: Option<usize>) -> Option<(usize, MarkerKind)> {
+    match (next_cwd, next_prompt) {
+        (Some(cwd), Some(prompt)) => {
+            if cwd <= prompt {
+                Some((cwd, MarkerKind::Cwd))
+            } else {
+                Some((prompt, MarkerKind::Prompt))
+            }
+        }
+        (Some(cwd), None) => Some((cwd, MarkerKind::Cwd)),
+        (None, Some(prompt)) => Some((prompt, MarkerKind::Prompt)),
+        (None, None) => None,
+    }
 }

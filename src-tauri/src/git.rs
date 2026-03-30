@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -19,9 +19,21 @@ pub struct ProjectScan {
     pub untracked_file_count: usize,
 }
 
+struct WorkspaceFileDiscovery {
+    actual_paths: HashSet<String>,
+    file_paths: Vec<String>,
+    git_repo_roots: BTreeSet<PathBuf>,
+}
+
 pub fn scan_project(project_path: &Path, live_files: &HashSet<String>) -> Result<ProjectScan> {
-    let statuses = collect_git_statuses(project_path).unwrap_or_default();
-    let files = collect_files(project_path, &statuses, live_files)?;
+    let discovery = discover_workspace_files(project_path)?;
+    let statuses = collect_workspace_git_statuses(project_path, &discovery.git_repo_roots);
+    let files = build_project_files(
+        discovery.file_paths,
+        &discovery.actual_paths,
+        &statuses,
+        live_files,
+    );
     let changed_file_count = files.iter().filter(|file| file.git_status != ' ').count();
     let untracked_file_count = files.iter().filter(|file| file.git_status == '?').count();
 
@@ -39,7 +51,11 @@ pub fn build_file_preview_with_options(
     start_line: Option<usize>,
     line_count: Option<usize>,
 ) -> Result<FilePreview> {
-    let statuses = collect_git_statuses(project_path).unwrap_or_default();
+    let repo_root = resolve_git_repo_root(project_path, relative_path);
+    let statuses = repo_root
+        .as_deref()
+        .map(|root| collect_git_statuses_for_repo(project_path, root).unwrap_or_default())
+        .unwrap_or_default();
     let git_status = *statuses.get(relative_path).unwrap_or(&' ');
     let live_status = resolve_live_status(live_files, relative_path, git_status);
     let absolute_path = project_path.join(relative_path);
@@ -70,18 +86,30 @@ pub fn build_file_preview_with_options(
 
     match git_status {
         '?' | 'A' => build_untracked_preview(project_path, relative_path, git_status, live_status),
-        'D' => build_git_preview(project_path, relative_path, git_status, live_status),
-        'M' => build_git_preview(project_path, relative_path, git_status, live_status.clone())
-            .or_else(|_| {
-                build_text_preview(
-                    project_path,
-                    relative_path,
-                    git_status,
-                    live_status,
-                    start_line,
-                    line_count,
-                )
-            }),
+        'D' => build_git_preview(
+            project_path,
+            relative_path,
+            repo_root.as_deref(),
+            git_status,
+            live_status,
+        ),
+        'M' => build_git_preview(
+            project_path,
+            relative_path,
+            repo_root.as_deref(),
+            git_status,
+            live_status.clone(),
+        )
+        .or_else(|_| {
+            build_text_preview(
+                project_path,
+                relative_path,
+                git_status,
+                live_status,
+                start_line,
+                line_count,
+            )
+        }),
         _ => build_text_preview(
             project_path,
             relative_path,
@@ -93,61 +121,19 @@ pub fn build_file_preview_with_options(
     }
 }
 
+#[cfg(test)]
 fn collect_files(
     project_path: &Path,
     statuses: &HashMap<String, char>,
     live_files: &HashSet<String>,
 ) -> Result<Vec<ProjectFileEntry>> {
-    let mut actual_paths = BTreeSet::new();
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(project_path)
-        .into_iter()
-        .filter_entry(|entry| should_visit(entry.path()))
-    {
-        let entry = entry?;
-
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let relative = relative_path(project_path, entry.path())?;
-        actual_paths.insert(relative.clone());
-        let git_status = *statuses.get(&relative).unwrap_or(&' ');
-        let live_status = resolve_live_status(live_files, &relative, git_status);
-
-        if !should_include_snapshot_file(&relative, git_status, &live_status) {
-            continue;
-        }
-
-        files.push(ProjectFileEntry {
-            path: relative,
-            kind: "file".to_string(),
-            git_status,
-            live_status,
-        });
-    }
-
-    for (path, status) in statuses {
-        if *status == 'D'
-            && !actual_paths.contains(path)
-            && should_include_snapshot_file(
-                path,
-                *status,
-                &resolve_live_status(live_files, path, 'D'),
-            )
-        {
-            files.push(ProjectFileEntry {
-                path: path.clone(),
-                kind: "file".to_string(),
-                git_status: 'D',
-                live_status: resolve_live_status(live_files, path, 'D'),
-            });
-        }
-    }
-
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(files)
+    let discovery = discover_workspace_files(project_path)?;
+    Ok(build_project_files(
+        discovery.file_paths,
+        &discovery.actual_paths,
+        statuses,
+        live_files,
+    ))
 }
 
 fn build_untracked_preview(
@@ -200,30 +186,56 @@ fn build_untracked_preview(
 
 fn build_git_preview(
     project_path: &Path,
-    relative_path: &str,
+    workspace_path: &str,
+    repo_root: Option<&Path>,
     status: char,
     live_status: LiveStatus,
 ) -> Result<FilePreview> {
+    let Some(repo_root) = repo_root else {
+        return build_text_preview(
+            project_path,
+            workspace_path,
+            status,
+            live_status,
+            None,
+            None,
+        );
+    };
+    let repo_relative_path = relative_path(repo_root, &project_path.join(workspace_path))?;
     let output = Command::new("git")
         .arg("diff")
         .arg("--no-ext-diff")
         .arg("--no-color")
         .arg("--relative")
         .arg("--")
-        .arg(relative_path)
-        .current_dir(project_path)
+        .arg(&repo_relative_path)
+        .current_dir(repo_root)
         .output()
-        .with_context(|| format!("failed to run git diff for {relative_path}"))?;
+        .with_context(|| format!("failed to run git diff for {workspace_path}"))?;
 
     if !output.status.success() || output.stdout.is_empty() {
-        return build_text_preview(project_path, relative_path, status, live_status, None, None);
+        return build_text_preview(
+            project_path,
+            workspace_path,
+            status,
+            live_status,
+            None,
+            None,
+        );
     }
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
     let lines = parse_unified_diff(&diff_text);
 
     if lines.is_empty() {
-        return build_text_preview(project_path, relative_path, status, live_status, None, None);
+        return build_text_preview(
+            project_path,
+            workspace_path,
+            status,
+            live_status,
+            None,
+            None,
+        );
     }
 
     Ok(FilePreview {
@@ -234,7 +246,7 @@ fn build_git_preview(
         lines,
         live_status,
         mode: FilePreviewMode::Diff,
-        path: relative_path.to_string(),
+        path: workspace_path.to_string(),
     })
 }
 
@@ -307,12 +319,15 @@ fn build_text_preview(
     })
 }
 
-fn collect_git_statuses(project_path: &Path) -> Result<HashMap<String, char>> {
+fn collect_git_statuses_for_repo(
+    project_path: &Path,
+    repo_root: &Path,
+) -> Result<HashMap<String, char>> {
     let output = Command::new("git")
         .arg("status")
         .arg("--porcelain=v1")
         .arg("--untracked-files=all")
-        .current_dir(project_path)
+        .current_dir(repo_root)
         .output()
         .context("failed to run git status")?;
 
@@ -321,15 +336,191 @@ fn collect_git_statuses(project_path: &Path) -> Result<HashMap<String, char>> {
     }
 
     let status_output = String::from_utf8_lossy(&output.stdout);
+    let repo_prefix = relative_path(project_path, repo_root).ok();
     let mut statuses = HashMap::new();
 
     for line in status_output.lines() {
         if let Some((path, status)) = parse_porcelain_line(line) {
-            statuses.insert(path, status);
+            statuses.insert(join_workspace_path(repo_prefix.as_deref(), &path), status);
         }
     }
 
     Ok(statuses)
+}
+
+fn collect_workspace_git_statuses(
+    project_path: &Path,
+    repo_roots: &BTreeSet<PathBuf>,
+) -> HashMap<String, char> {
+    let mut statuses = HashMap::new();
+
+    for repo_root in repo_roots {
+        if let Ok(repo_statuses) = collect_git_statuses_for_repo(project_path, repo_root) {
+            statuses.extend(repo_statuses);
+        }
+    }
+
+    statuses
+}
+
+fn discover_workspace_files(project_path: &Path) -> Result<WorkspaceFileDiscovery> {
+    let mut actual_paths = HashSet::new();
+    let mut file_paths = Vec::new();
+    let mut git_repo_roots = BTreeSet::new();
+    let mut repo_root_cache = HashMap::new();
+
+    if project_path.join(".git").exists() {
+        git_repo_roots.insert(project_path.to_path_buf());
+        repo_root_cache.insert(project_path.to_path_buf(), Some(project_path.to_path_buf()));
+    }
+
+    for entry in WalkDir::new(project_path)
+        .into_iter()
+        .filter_entry(|entry| should_visit(entry.path()))
+    {
+        let entry = entry?;
+
+        if entry.file_type().is_dir() {
+            if entry.path() != project_path && entry.path().join(".git").exists() {
+                let repo_root = entry.path().to_path_buf();
+                repo_root_cache.insert(repo_root.clone(), Some(repo_root.clone()));
+                git_repo_roots.insert(repo_root);
+            }
+            continue;
+        }
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let relative = relative_path(project_path, entry.path())?;
+        actual_paths.insert(relative.clone());
+        file_paths.push(relative);
+
+        let parent = entry.path().parent().unwrap_or(project_path);
+        if let Some(repo_root) =
+            find_containing_git_repo_root(project_path, parent, &mut repo_root_cache)
+        {
+            git_repo_roots.insert(repo_root);
+        }
+    }
+
+    Ok(WorkspaceFileDiscovery {
+        actual_paths,
+        file_paths,
+        git_repo_roots,
+    })
+}
+
+fn build_project_files(
+    file_paths: Vec<String>,
+    actual_paths: &HashSet<String>,
+    statuses: &HashMap<String, char>,
+    live_files: &HashSet<String>,
+) -> Vec<ProjectFileEntry> {
+    let mut files = Vec::new();
+
+    for relative in file_paths {
+        let git_status = *statuses.get(&relative).unwrap_or(&' ');
+        let live_status = resolve_live_status(live_files, &relative, git_status);
+
+        if !should_include_snapshot_file(&relative, git_status, &live_status) {
+            continue;
+        }
+
+        files.push(ProjectFileEntry {
+            path: relative,
+            kind: "file".to_string(),
+            git_status,
+            live_status,
+        });
+    }
+
+    for (path, status) in statuses {
+        if *status == 'D'
+            && !actual_paths.contains(path)
+            && should_include_snapshot_file(
+                path,
+                *status,
+                &resolve_live_status(live_files, path, 'D'),
+            )
+        {
+            files.push(ProjectFileEntry {
+                path: path.clone(),
+                kind: "file".to_string(),
+                git_status: 'D',
+                live_status: resolve_live_status(live_files, path, 'D'),
+            });
+        }
+    }
+
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    files
+}
+
+fn resolve_git_repo_root(project_path: &Path, relative_path: &str) -> Option<PathBuf> {
+    let absolute_path = project_path.join(relative_path);
+    let start_dir = absolute_path.parent().unwrap_or(project_path);
+    let mut cache = HashMap::new();
+
+    find_containing_git_repo_root(project_path, start_dir, &mut cache)
+}
+
+fn find_containing_git_repo_root(
+    project_path: &Path,
+    start_dir: &Path,
+    cache: &mut HashMap<PathBuf, Option<PathBuf>>,
+) -> Option<PathBuf> {
+    let mut visited = Vec::new();
+    let mut current = Some(start_dir);
+
+    while let Some(directory) = current {
+        if !directory.starts_with(project_path) {
+            break;
+        }
+
+        if let Some(cached) = cache.get(directory) {
+            let result = cached.clone();
+
+            for visited_directory in visited {
+                cache.insert(visited_directory, result.clone());
+            }
+
+            return result;
+        }
+
+        if directory.join(".git").exists() {
+            let result = Some(directory.to_path_buf());
+            cache.insert(directory.to_path_buf(), result.clone());
+
+            for visited_directory in visited {
+                cache.insert(visited_directory, result.clone());
+            }
+
+            return result;
+        }
+
+        visited.push(directory.to_path_buf());
+
+        if directory == project_path {
+            break;
+        }
+
+        current = directory.parent();
+    }
+
+    for visited_directory in visited {
+        cache.insert(visited_directory, None);
+    }
+
+    None
+}
+
+fn join_workspace_path(repo_prefix: Option<&str>, repo_relative_path: &str) -> String {
+    match repo_prefix {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}/{repo_relative_path}"),
+        _ => repo_relative_path.to_string(),
+    }
 }
 
 fn parse_porcelain_line(line: &str) -> Option<(String, char)> {
@@ -537,6 +728,7 @@ mod tests {
 
     use super::{
         build_file_preview_with_options, collect_files, parse_porcelain_line, parse_unified_diff,
+        scan_project,
     };
     use crate::models::DiffLineKind;
 
@@ -726,6 +918,101 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(preview.lines.len(), 3);
         assert_eq!(preview.lines[0].content, "# After");
         assert_eq!(preview.lines[2].content, "Latest note");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scans_git_statuses_from_nested_repositories() {
+        let root = create_temp_project_root();
+        let nested_repo = root.join("packages/widget");
+        fs::create_dir_all(&nested_repo).unwrap();
+        init_git_repo(&nested_repo);
+        fs::create_dir_all(nested_repo.join("src")).unwrap();
+
+        let file_path = nested_repo.join("src/lib.rs");
+        fs::write(
+            &file_path,
+            "pub fn widget() -> &'static str {\n    \"before\"\n}\n",
+        )
+        .unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&nested_repo)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-qm", "init"])
+            .current_dir(&nested_repo)
+            .status()
+            .unwrap();
+
+        fs::write(
+            &file_path,
+            "pub fn widget() -> &'static str {\n    \"after\"\n}\n",
+        )
+        .unwrap();
+
+        let scan = scan_project(&root, &HashSet::new()).unwrap();
+        let changed = scan
+            .files
+            .iter()
+            .find(|file| file.path == "packages/widget/src/lib.rs")
+            .unwrap();
+
+        assert_eq!(changed.git_status, 'M');
+        assert_eq!(scan.changed_file_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn builds_diff_preview_for_files_inside_nested_repositories() {
+        let root = create_temp_project_root();
+        let nested_repo = root.join("packages/widget");
+        fs::create_dir_all(&nested_repo).unwrap();
+        init_git_repo(&nested_repo);
+        fs::create_dir_all(nested_repo.join("src")).unwrap();
+
+        let file_path = nested_repo.join("src/lib.rs");
+        fs::write(
+            &file_path,
+            "pub fn widget() -> &'static str {\n    \"before\"\n}\n",
+        )
+        .unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&nested_repo)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-qm", "init"])
+            .current_dir(&nested_repo)
+            .status()
+            .unwrap();
+
+        fs::write(
+            &file_path,
+            "pub fn widget() -> &'static str {\n    \"after\"\n}\n",
+        )
+        .unwrap();
+
+        let preview = build_file_preview_with_options(
+            &root,
+            "packages/widget/src/lib.rs",
+            &HashSet::new(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(matches!(preview.mode, crate::models::FilePreviewMode::Diff));
+        assert!(preview.lines.iter().any(|line| {
+            line.kind == DiffLineKind::Removed && line.content.contains("\"before\"")
+        }));
+        assert!(preview.lines.iter().any(|line| {
+            line.kind == DiffLineKind::Added && line.content.contains("\"after\"")
+        }));
 
         let _ = fs::remove_dir_all(root);
     }

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use crate::agent_detector::{AgentKind, AgentPhase, AgentStatusSnapshot};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppBootstrap {
@@ -73,6 +75,7 @@ pub struct DiffLine {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachment {
+    pub agent_status: AgentStatusSnapshot,
     pub cwd: Option<String>,
     pub history: String,
     pub pane_id: String,
@@ -101,6 +104,7 @@ pub struct ProjectWorkspaceState {
 #[serde(rename_all = "camelCase")]
 pub enum TerminalState {
     Attention,
+    Exited,
     #[default]
     Idle,
     Running,
@@ -128,6 +132,7 @@ pub enum DiffLineKind {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRefreshEvent {
     pub project_id: String,
+    pub paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,6 +151,16 @@ pub struct TerminalStateEvent {
     pub project_id: String,
     pub session_id: String,
     pub state: TerminalState,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStatusEvent {
+    pub agent: AgentKind,
+    pub pane_id: String,
+    pub phase: AgentPhase,
+    pub project_id: String,
+    pub session_id: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

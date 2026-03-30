@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
@@ -18,6 +19,7 @@ vi.mock('./lib/tauri', () => ({
   completePerformanceProbe: vi.fn(),
   isTauriEnvironment: vi.fn(() => true),
   listTerminals: vi.fn(),
+  listenAgentStatus: vi.fn().mockResolvedValue(unlisten),
   listenProjectRefresh: vi.fn().mockResolvedValue(unlisten),
   listenTerminalOutput: vi.fn().mockResolvedValue(unlisten),
   listenTerminalState: vi.fn().mockResolvedValue(unlisten),
@@ -38,6 +40,8 @@ vi.mock('./lib/tauri', () => ({
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    document.documentElement.removeAttribute('data-theme')
+    document.documentElement.style.cssText = ''
     useWorkspaceStore.setState({
       activeProjectId: null,
       draftName: '',
@@ -72,5 +76,59 @@ describe('App', () => {
         String(message).includes('getSnapshot should be cached'),
       ),
     ).toBe(false)
+  })
+
+  it('opens the command palette with the VS Code shortcut and applies the GitHub theme', async () => {
+    const user = userEvent.setup()
+
+    useWorkspaceStore.setState({
+      isBooting: false,
+    })
+
+    render(<App />)
+
+    fireEvent.keyDown(window, {
+      key: 'P',
+      metaKey: true,
+      shiftKey: true,
+    })
+
+    const input = await screen.findByRole('combobox', {
+      name: 'Command Palette',
+    })
+
+    await user.type(input, 'theme')
+    await user.keyboard('{Enter}{ArrowDown}{Enter}')
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe('github-dark-default')
+    })
+  })
+
+  it('opens the add-project dialog from the command palette', async () => {
+    const user = userEvent.setup()
+
+    useWorkspaceStore.setState({
+      isBooting: false,
+    })
+
+    render(<App />)
+
+    fireEvent.keyDown(window, {
+      key: 'P',
+      metaKey: true,
+      shiftKey: true,
+    })
+
+    const input = await screen.findByRole('combobox', {
+      name: 'Command Palette',
+    })
+
+    await user.type(input, 'open project')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().isProjectDialogOpen).toBe(true)
+    })
   })
 })

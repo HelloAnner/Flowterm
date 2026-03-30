@@ -15,6 +15,30 @@
   --accent-glow: #7ba7c8;
   --terminal-bg: #0f0f0f;
   --terminal-cursor: #c8a96e;
+  --ambient-primary: rgba(200, 169, 110, 0.08);
+  --ambient-secondary: rgba(123, 167, 200, 0.08);
+  --error-banner-bg: rgba(160, 96, 80, 0.12);
+  --interactive-hover: rgba(200, 169, 110, 0.12);
+  --terminal-divider: #0a0a0a;
+  --terminal-divider-strong: #1c1c1c;
+  --activity-glow: 0 0 6px rgba(122, 158, 138, 0.7);
+  --activity-halo: rgba(122, 158, 138, 0.18);
+  --dirty-glow: 0 0 6px rgba(200, 169, 110, 0.45);
+  --selection-glow: 0 0 8px rgba(200, 169, 110, 0.7);
+  --sidebar-nav-bg: linear-gradient(180deg, rgba(200, 169, 110, 0.06), rgba(15, 15, 15, 0));
+  --sidebar-active-border: rgba(200, 169, 110, 0.36);
+  --sidebar-active-bg: rgba(200, 169, 110, 0.09);
+  --sidebar-badge-bg: rgba(200, 169, 110, 0.18);
+  --surface-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  --diff-added-bg: rgba(122, 158, 138, 0.12);
+  --diff-removed-bg: rgba(160, 96, 80, 0.12);
+  --status-added-border: rgba(122, 158, 138, 0.3);
+  --status-removed-border: rgba(160, 96, 80, 0.3);
+  --status-modified-border: rgba(200, 169, 110, 0.3);
+  --status-added-bg: rgba(122, 158, 138, 0.25);
+  --status-removed-bg: rgba(160, 96, 80, 0.25);
+  --info-badge-border: rgba(123, 167, 200, 0.18);
+  --info-badge-bg: rgba(123, 167, 200, 0.08);
   --font-ui: 'Inter', 'SF Pro Text', system-ui, sans-serif;
   --font-mono: 'Berkeley Mono', 'Geist Mono', 'JetBrains Mono', monospace;
   --radius-sm: 4px;
@@ -49,8 +73,8 @@ body,
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(200, 169, 110, 0.08), transparent 32%),
-    radial-gradient(circle at top right, rgba(123, 167, 200, 0.08), transparent 24%),
+    radial-gradient(circle at top left, var(--ambient-primary), transparent 32%),
+    radial-gradient(circle at top right, var(--ambient-secondary), transparent 24%),
     var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-ui);
@@ -83,6 +107,11 @@ pre {
   font-size: 14px;
   line-height: 1.75;
   max-width: 72ch;
+}
+
+.md-prose--full-width {
+  max-width: none;
+  width: 100%;
 }
 
 .md-prose h1,

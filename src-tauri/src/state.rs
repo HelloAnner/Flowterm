@@ -106,7 +106,8 @@ impl ProjectRegistry {
 
         self.active_project_id = Some(project.id.clone());
         self.projects.push(project);
-        self.projects.sort_by(|left, right| left.name.cmp(&right.name));
+        self.projects
+            .sort_by(|left, right| left.name.cmp(&right.name));
         self.persist_active_project()
     }
 
@@ -517,7 +518,8 @@ fn load_active_project_id(path: &PathBuf) -> Result<Option<String>> {
 
 fn load_projects(path: &PathBuf) -> Result<Vec<ProjectRecord>> {
     let connection = open_connection(path)?;
-    let mut statement = connection.prepare("SELECT id, name, path FROM projects ORDER BY name ASC")?;
+    let mut statement =
+        connection.prepare("SELECT id, name, path FROM projects ORDER BY name ASC")?;
     let rows = statement.query_map([], |row| {
         Ok(ProjectRecord {
             id: row.get(0)?,
@@ -566,10 +568,16 @@ mod tests {
         fs::create_dir_all(project_dir.join("src/components"))?;
 
         let mut registry = ProjectRegistry::load_from_dir(app_data_dir.clone())?;
-        registry.add_project(project_dir.to_string_lossy().to_string(), Some("Flowterm".into()))?;
+        registry.add_project(
+            project_dir.to_string_lossy().to_string(),
+            Some("Flowterm".into()),
+        )?;
         let project_id = registry.active_project_id().unwrap();
         let main_cwd = project_dir.join("src").to_string_lossy().to_string();
-        let split_cwd = project_dir.join("src/components").to_string_lossy().to_string();
+        let split_cwd = project_dir
+            .join("src/components")
+            .to_string_lossy()
+            .to_string();
 
         registry.save_workspace_state(
             &project_id,

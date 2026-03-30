@@ -945,6 +945,7 @@ dependencies = [
  "log",
  "notify",
  "portable-pty",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

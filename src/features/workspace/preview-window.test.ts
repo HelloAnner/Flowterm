@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clampImageScale,
   createImageViewportState,
+  resolvePreviewRenderRange,
   resolvePreviewRequestWindow,
   zoomImageViewport,
 } from './preview-window'
@@ -37,6 +38,40 @@ describe('resolvePreviewRequestWindow', () => {
     ).toEqual({
       lineCount: 160,
       startLine: 1040,
+    })
+  })
+})
+
+describe('resolvePreviewRenderRange', () => {
+  it('maps viewport metrics into a bounded local slice for the loaded chunk', () => {
+    expect(
+      resolvePreviewRenderRange({
+        loadedLineCount: 200,
+        overscanRows: 2,
+        previewStartLine: 100,
+        rowHeight: 24,
+        scrollTop: 24 * 110,
+        viewportHeight: 24 * 10,
+      }),
+    ).toEqual({
+      endIndex: 22,
+      startIndex: 8,
+    })
+  })
+
+  it('clamps the render range when the viewport lands beyond the loaded chunk', () => {
+    expect(
+      resolvePreviewRenderRange({
+        loadedLineCount: 30,
+        overscanRows: 4,
+        previewStartLine: 100,
+        rowHeight: 24,
+        scrollTop: 24 * 140,
+        viewportHeight: 24 * 12,
+      }),
+    ).toEqual({
+      endIndex: 30,
+      startIndex: 10,
     })
   })
 })
