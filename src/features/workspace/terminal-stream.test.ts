@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { TerminalOutputEvent } from '../../lib/contracts'
 import {
+  claimTerminalHistory,
+  clearTerminalStream,
   publishTerminalOutput,
   subscribeTerminalOutput,
 } from './terminal-stream'
@@ -14,6 +16,11 @@ const primaryEvent: TerminalOutputEvent = {
 }
 
 describe('terminal output stream', () => {
+  afterEach(() => {
+    clearTerminalStream('session-main')
+    clearTerminalStream('session-split')
+  })
+
   it('delivers chunks only to subscribers of the matching session', () => {
     const mainListener = vi.fn()
     const splitListener = vi.fn()
@@ -37,5 +44,22 @@ describe('terminal output stream', () => {
     publishTerminalOutput(primaryEvent)
 
     expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('keeps accumulated history across listener gaps so remounted panes can fully recover', () => {
+    const initialHistory = '$ pwd\n/Users/anner/Flowterm\n'
+    const listener = vi.fn()
+    const dispose = subscribeTerminalOutput('session-main', listener)
+
+    publishTerminalOutput(primaryEvent)
+    dispose()
+    publishTerminalOutput({
+      ...primaryEvent,
+      chunk: 'echo split\n',
+    })
+
+    expect(claimTerminalHistory('session-main', initialHistory)).toBe(
+      `${initialHistory}pwd\necho split\n`,
+    )
   })
 })

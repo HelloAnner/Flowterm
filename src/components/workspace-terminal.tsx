@@ -10,7 +10,10 @@ import {
   pickLeadingAgentStatus,
   resolveAgentStatusCopy,
 } from '../features/workspace/agent-status'
-import { subscribeTerminalOutput } from '../features/workspace/terminal-stream'
+import {
+  claimTerminalHistory,
+  subscribeTerminalOutput,
+} from '../features/workspace/terminal-stream'
 import { createTerminalResizeScheduler } from '../features/workspace/terminal-resize'
 import { cn } from '../lib/utils'
 import type { AgentStatusSnapshot, TerminalState } from '../lib/contracts'
@@ -157,8 +160,9 @@ function TerminalPane({
       cursorBlink: true,
       fontFamily:
         '"Berkeley Mono", "Geist Mono", "JetBrains Mono", ui-monospace, monospace',
-      fontSize: 13,
-      lineHeight: 1.35,
+      fontSize: 12,
+      letterSpacing: -0.6,
+      lineHeight: 1.22,
       theme,
     })
     const fitAddon = new FitAddon()
@@ -212,8 +216,9 @@ function TerminalPane({
     }
 
     if (attachedSessionRef.current !== pane.sessionId) {
+      const terminalHistory = claimTerminalHistory(pane.sessionId, pane.history)
       terminal.reset()
-      terminal.write(pane.history)
+      terminal.write(terminalHistory)
       requestAnimationFrame(() => {
         fitAddon.fit()
       })

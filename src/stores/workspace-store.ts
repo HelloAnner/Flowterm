@@ -49,6 +49,7 @@ import {
   updateAgentStatus as updateTerminalPaneAgentStatus,
   updateTerminalState as updateTerminalPaneState,
 } from '../features/workspace/terminal-panes'
+import { clearTerminalStream } from '../features/workspace/terminal-stream'
 import { createWorkspacePersistScheduler } from '../features/workspace/workspace-persist'
 
 const MAX_TERMINAL_PANES = 3
@@ -414,6 +415,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await closeTerminalCommand(projectId, pane.sessionId)
     }
 
+    clearTerminalStream(pane.sessionId)
+
     set((state) => {
       const terminalProjectState = removeTerminalPaneState(
         ensureProjectTerminalState(state.terminalProjectStateByProject, projectId),
@@ -631,6 +634,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   updateTerminalState: (event) => {
     if (event.state === 'exited') {
+      clearTerminalStream(event.sessionId)
       set((state) => {
         const terminalProjectState = removeTerminalPaneState(
           ensureProjectTerminalState(state.terminalProjectStateByProject, event.projectId),

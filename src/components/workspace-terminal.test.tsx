@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceTerminal } from './workspace-terminal'
 
 const {
+  claimTerminalHistoryMock,
   fitAddonFit,
   fitAddonProposeDimensions,
   resizeSchedulerMock,
   subscribeTerminalOutputMock,
   terminalConstructor,
 } = vi.hoisted(() => ({
+  claimTerminalHistoryMock: vi.fn((_: string, history: string) => history),
   terminalConstructor: vi.fn(),
   fitAddonFit: vi.fn(),
   fitAddonProposeDimensions: vi.fn(() => ({ cols: 80, rows: 24 })),
@@ -39,6 +41,7 @@ vi.mock('@xterm/addon-fit', () => ({
 }))
 
 vi.mock('../features/workspace/terminal-stream', () => ({
+  claimTerminalHistory: claimTerminalHistoryMock,
   subscribeTerminalOutput: subscribeTerminalOutputMock,
 }))
 
@@ -49,6 +52,7 @@ vi.mock('../features/workspace/terminal-resize', () => ({
 describe('WorkspaceTerminal', () => {
   beforeEach(() => {
     terminalConstructor.mockClear()
+    claimTerminalHistoryMock.mockClear()
     fitAddonFit.mockClear()
     fitAddonProposeDimensions.mockClear()
     subscribeTerminalOutputMock.mockClear()
@@ -105,8 +109,9 @@ describe('WorkspaceTerminal', () => {
 
     expect(terminalConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
-        fontSize: 13,
-        lineHeight: 1.35,
+        fontSize: 12,
+        letterSpacing: -0.6,
+        lineHeight: 1.22,
       }),
     )
   })

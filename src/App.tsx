@@ -71,6 +71,7 @@ function App(): ReactElement {
   const refreshActiveProject = useWorkspaceStore((state) => state.refreshActiveProject)
   const removeProject = useWorkspaceStore((state) => state.removeProject)
   const selectedFilePath = useWorkspaceStore((state) => state.selectedFilePath)
+  const selectFile = useWorkspaceStore((state) => state.selectFile)
   const selectProject = useWorkspaceStore((state) => state.selectProject)
   const selectTheme = useWorkspaceStore((state) => state.selectTheme)
   const snapshot = useWorkspaceStore((state) => state.snapshot)
