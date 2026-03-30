@@ -158,7 +158,7 @@ function TerminalPane({
       fontFamily:
         '"Berkeley Mono", "Geist Mono", "JetBrains Mono", ui-monospace, monospace',
       fontSize: 13,
-      lineHeight: 1.6,
+      lineHeight: 1.35,
       theme,
     })
     const fitAddon = new FitAddon()
