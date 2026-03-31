@@ -98,7 +98,10 @@ describe('App', () => {
     })
 
     await user.type(input, 'theme')
-    await user.keyboard('{Enter}{ArrowDown}{Enter}')
+    await user.keyboard('{Enter}')
+    await user.clear(input)
+    await user.type(input, 'github')
+    await user.keyboard('{Enter}')
 
     await waitFor(() => {
       expect(document.documentElement.dataset.theme).toBe('github-dark-default')

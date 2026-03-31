@@ -35,7 +35,7 @@ describe('CommandPalette', () => {
     expect(screen.getByRole('option', { name: /Terminal: Split Terminal/i })).toBeInTheDocument()
   })
 
-  it('opens the color theme picker and switches to GitHub Dark Default', async () => {
+  it('opens the color theme picker and lists the modern bundled themes', async () => {
     const user = userEvent.setup()
     const handleClose = vi.fn()
     const handleSelectTheme = vi.fn()
@@ -68,11 +68,21 @@ describe('CommandPalette', () => {
     expect(
       screen.getByRole('heading', { name: 'Preferences: Color Theme' }),
     ).toBeInTheDocument()
+    expect(screen.getByText('Dark')).toBeInTheDocument()
+    expect(screen.getByText('Light')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Cursor Dark/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Ghostty Dark/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Tokyo Night/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Night Owl/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Nord/i })).toBeInTheDocument()
     expect(
       screen.getByRole('option', { name: /GitHub Dark Default/i }),
     ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /IntelliJ Light/i })).toBeInTheDocument()
 
-    await user.keyboard('{ArrowDown}{Enter}')
+    await user.clear(input)
+    await user.type(input, 'github')
+    await user.keyboard('{Enter}')
 
     expect(handleSelectTheme).toHaveBeenCalledWith('github-dark-default')
     expect(handleClose).toHaveBeenCalled()

@@ -34,12 +34,21 @@ interface CommandPaletteProps {
 type PaletteScreen = 'files' | 'projects' | 'root' | 'themes'
 
 interface PaletteItem {
+  colorScheme?: 'dark' | 'light'
   id: string
   icon: ReactElement
   kind: 'file' | 'files-root' | 'open-project' | 'project' | 'projects-root' | 'split-terminal' | 'theme' | 'themes-root'
   keywords: string[]
   label: string
   rightSlot?: string
+}
+
+interface PaletteSection {
+  items: Array<{
+    index: number
+    item: PaletteItem
+  }>
+  label: string
 }
 
 export function CommandPalette({
@@ -113,13 +122,14 @@ export function CommandPalette({
   const themeItems = useMemo<PaletteItem[]>(
     () =>
       listThemes().map((theme) => ({
+        colorScheme: theme.colorScheme,
         id: theme.id,
         icon:
           theme.id === activeThemeId
             ? <Check className="h-4 w-4" />
             : <span className="block h-4 w-4" />,
         kind: 'theme',
-        keywords: [theme.id, theme.label, 'theme', 'dark'],
+        keywords: [theme.id, theme.label, 'theme', theme.colorScheme],
         label: theme.label,
       })),
     [activeThemeId],
@@ -171,6 +181,23 @@ export function CommandPalette({
       ),
     )
   }, [fileItems, projectItems, query, rootItems, screen, themeItems])
+  const themeSections = useMemo<PaletteSection[]>(() => {
+    if (screen !== 'themes') {
+      return []
+    }
+
+    const darkItems = visibleItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.kind === 'theme' && item.colorScheme === 'dark')
+    const lightItems = visibleItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.kind === 'theme' && item.colorScheme === 'light')
+
+    return [
+      darkItems.length > 0 ? { label: 'Dark', items: darkItems } : null,
+      lightItems.length > 0 ? { label: 'Light', items: lightItems } : null,
+    ].filter((section): section is PaletteSection => section !== null)
+  }, [screen, visibleItems])
 
   useEffect(() => {
     if (!isOpen) {
@@ -346,31 +373,66 @@ export function CommandPalette({
             role="listbox"
           >
             {visibleItems.length > 0 ? (
-              visibleItems.map((item, index) => (
-                <button
-                  aria-selected={index === activeIndex}
-                  className={cn(
-                    'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors',
-                    index === activeIndex
-                      ? 'bg-[var(--sidebar-active-bg)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]',
-                  )}
-                  key={item.id}
-                  onClick={() => handleSelect(item)}
-                  role="option"
-                  type="button"
-                >
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--accent-glow)]">
-                    {item.icon}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {item.rightSlot ? (
-                    <span className="shrink-0 text-xs text-[var(--text-muted)]">
-                      {item.rightSlot}
+              screen === 'themes' ? (
+                themeSections.map((section) => (
+                  <div className="py-1" key={section.label}>
+                    <div className="px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                      {section.label}
+                    </div>
+                    {section.items.map(({ item, index }) => (
+                      <button
+                        aria-selected={index === activeIndex}
+                        className={cn(
+                          'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors',
+                          index === activeIndex
+                            ? 'bg-[var(--sidebar-active-bg)] text-[var(--text-primary)]'
+                            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]',
+                        )}
+                        key={item.id}
+                        onClick={() => handleSelect(item)}
+                        role="option"
+                        type="button"
+                      >
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--accent-glow)]">
+                          {item.icon}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                        {item.rightSlot ? (
+                          <span className="shrink-0 text-xs text-[var(--text-muted)]">
+                            {item.rightSlot}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ))
+              ) : (
+                visibleItems.map((item, index) => (
+                  <button
+                    aria-selected={index === activeIndex}
+                    className={cn(
+                      'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors',
+                      index === activeIndex
+                        ? 'bg-[var(--sidebar-active-bg)] text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]',
+                    )}
+                    key={item.id}
+                    onClick={() => handleSelect(item)}
+                    role="option"
+                    type="button"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--accent-glow)]">
+                      {item.icon}
                     </span>
-                  ) : null}
-                </button>
-              ))
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.rightSlot ? (
+                      <span className="shrink-0 text-xs text-[var(--text-muted)]">
+                        {item.rightSlot}
+                      </span>
+                    ) : null}
+                  </button>
+                ))
+              )
             ) : (
               <div className="px-4 py-6 text-sm text-[var(--text-muted)]">
                 No matching commands

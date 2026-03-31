@@ -8,6 +8,9 @@ import {
 describe('project workspace memory', () => {
   it('creates a stable empty workspace state', () => {
     expect(createProjectWorkspaceState()).toEqual({
+      activePaneId: null,
+      isSplitView: true,
+      railWidth: 44,
       selectedFilePath: null,
       terminalPaneSizes: [],
       treeExpandedPaths: {},

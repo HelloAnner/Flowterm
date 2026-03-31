@@ -204,6 +204,9 @@ describe('workspace store terminal panes', () => {
       },
       workspaceStateByProject: {
         'project-a': {
+          activePaneId: 'main',
+          isSplitView: true,
+          railWidth: 44,
           selectedFilePath: null,
           terminalPaneSizes: [50, 50],
           treeExpandedPaths: {},
@@ -239,6 +242,63 @@ describe('workspace store terminal panes', () => {
       33.333333333333336,
       33.333333333333336,
     ])
+  })
+
+  it('enters split view and focuses the new pane when adding another terminal', async () => {
+    attachTerminalMock.mockResolvedValue({
+      agentStatus: {
+        agent: 'unknown',
+        phase: 'idle',
+      },
+      cwd: '/tmp/docs',
+      history: '',
+      paneId: 'pane-second',
+      projectId: 'project-a',
+      sessionId: 'session-second',
+      shellLabel: 'zsh',
+      state: 'idle',
+    })
+
+    useWorkspaceStore.setState({
+      terminalProjectStateByProject: {
+        'project-a': {
+          paneOrder: ['main'],
+          panesById: {
+            main: {
+              agentStatus: {
+                agent: 'unknown',
+                phase: 'idle',
+              },
+              cwd: '/tmp/flowterm',
+              history: '',
+              paneId: 'main',
+              projectId: 'project-a',
+              sessionId: 'session-main',
+              shellLabel: 'zsh',
+              state: 'idle',
+            },
+          },
+        },
+      },
+      workspaceStateByProject: {
+        'project-a': {
+          activePaneId: 'main',
+          isSplitView: false,
+          railWidth: 44,
+          selectedFilePath: null,
+          terminalPaneSizes: [100],
+          treeExpandedPaths: {},
+        },
+      },
+    })
+
+    await useWorkspaceStore.getState().addTerminalPane('project-a')
+
+    expect(useWorkspaceStore.getState().workspaceStateByProject['project-a']).toMatchObject({
+      activePaneId: 'pane-second',
+      isSplitView: true,
+      terminalPaneSizes: [50, 50],
+    })
   })
 
   it('removes an exited pane and rebalances the remaining layout', () => {
@@ -278,6 +338,9 @@ describe('workspace store terminal panes', () => {
       },
       workspaceStateByProject: {
         'project-a': {
+          activePaneId: 'main',
+          isSplitView: true,
+          railWidth: 44,
           selectedFilePath: null,
           terminalPaneSizes: [50, 50],
           treeExpandedPaths: {},
@@ -330,6 +393,9 @@ describe('workspace store terminal panes', () => {
       },
       workspaceStateByProject: {
         'project-a': {
+          activePaneId: 'main',
+          isSplitView: true,
+          railWidth: 44,
           selectedFilePath: null,
           terminalPaneSizes: [100],
           treeExpandedPaths: {},
@@ -416,6 +482,9 @@ describe('workspace store project summaries', () => {
       },
       workspaceStateByProject: {
         'project-a': {
+          activePaneId: 'main',
+          isSplitView: true,
+          railWidth: 44,
           selectedFilePath: 'src/App.tsx',
           terminalPaneSizes: [100],
           treeExpandedPaths: {},

@@ -189,6 +189,9 @@ async function persistWorkspaceState(
   selectedFilePath: string | null,
 ): Promise<void> {
   const workspaceState: ProjectWorkspaceState = {
+    activePaneId: 'main',
+    isSplitView: true,
+    railWidth: 44,
     selectedFilePath,
     terminalPaneSizes: [65, 35],
     treeExpandedPaths: {},

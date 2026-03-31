@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WorkspaceTerminal } from './workspace-terminal'
@@ -78,9 +78,14 @@ describe('WorkspaceTerminal', () => {
   it('creates xterm with a tighter line height for readable density', () => {
     render(
       <WorkspaceTerminal
+        activePaneId={null}
+        isSplitView={true}
         onAddPane={vi.fn()}
         onLayout={vi.fn()}
         onRemovePane={vi.fn()}
+        onSelectPane={vi.fn()}
+        onSetRailWidth={vi.fn()}
+        onToggleSplitView={vi.fn()}
         paneSizes={[100]}
         panes={[
           {
@@ -97,6 +102,7 @@ describe('WorkspaceTerminal', () => {
             state: 'idle',
           },
         ]}
+        railWidth={44}
         resizeTerminal={vi.fn().mockResolvedValue(undefined)}
         theme={{
           background: '#000000',
@@ -114,5 +120,116 @@ describe('WorkspaceTerminal', () => {
         lineHeight: 1.22,
       }),
     )
+  })
+
+  it('uses pane names instead of repeating the shell label in the session rail', () => {
+    render(
+      <WorkspaceTerminal
+        activePaneId="main"
+        isSplitView={true}
+        onAddPane={vi.fn()}
+        onLayout={vi.fn()}
+        onRemovePane={vi.fn()}
+        onSelectPane={vi.fn()}
+        onSetRailWidth={vi.fn()}
+        onToggleSplitView={vi.fn()}
+        paneSizes={[50, 50]}
+        panes={[
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'idle',
+            },
+            cwd: '/tmp/flowterm',
+            history: '$ pwd',
+            id: 'main',
+            projectId: 'project-a',
+            sessionId: 'session-a',
+            shellLabel: 'zsh',
+            state: 'idle',
+          },
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'running',
+            },
+            cwd: '/tmp/docs',
+            history: '$ ls',
+            id: 'pane-second',
+            projectId: 'project-a',
+            sessionId: 'session-b',
+            shellLabel: 'zsh',
+            state: 'running',
+          },
+        ]}
+        railWidth={160}
+        resizeTerminal={vi.fn().mockResolvedValue(undefined)}
+        theme={{
+          background: '#000000',
+          cursor: '#ffffff',
+          foreground: '#cccccc',
+        }}
+        writeTerminal={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getAllByText('flowterm').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('docs').length).toBeGreaterThan(0)
+  })
+
+  it('renders icon-only layout controls instead of split text buttons', () => {
+    render(
+      <WorkspaceTerminal
+        activePaneId="main"
+        isSplitView={true}
+        onAddPane={vi.fn()}
+        onLayout={vi.fn()}
+        onRemovePane={vi.fn()}
+        onSelectPane={vi.fn()}
+        onSetRailWidth={vi.fn()}
+        onToggleSplitView={vi.fn()}
+        paneSizes={[50, 50]}
+        panes={[
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'idle',
+            },
+            cwd: '/tmp/flowterm',
+            history: '$ pwd',
+            id: 'main',
+            projectId: 'project-a',
+            sessionId: 'session-a',
+            shellLabel: 'zsh',
+            state: 'idle',
+          },
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'running',
+            },
+            cwd: '/tmp/docs',
+            history: '$ ls',
+            id: 'pane-second',
+            projectId: 'project-a',
+            sessionId: 'session-b',
+            shellLabel: 'zsh',
+            state: 'running',
+          },
+        ]}
+        railWidth={160}
+        resizeTerminal={vi.fn().mockResolvedValue(undefined)}
+        theme={{
+          background: '#000000',
+          cursor: '#ffffff',
+          foreground: '#cccccc',
+        }}
+        writeTerminal={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '切换终端布局' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '分栏' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '单窗' })).not.toBeInTheDocument()
   })
 })

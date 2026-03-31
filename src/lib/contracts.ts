@@ -64,6 +64,9 @@ export interface TerminalAttachment {
 }
 
 export interface ProjectWorkspaceState {
+  activePaneId: string | null
+  isSplitView: boolean
+  railWidth: number
   selectedFilePath: string | null
   terminalPaneSizes: number[]
   treeExpandedPaths: Record<string, boolean>

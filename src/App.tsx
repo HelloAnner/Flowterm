@@ -78,6 +78,9 @@ function App(): ReactElement {
   const addTerminalPane = useWorkspaceStore((state) => state.addTerminalPane)
   const removeTerminalPane = useWorkspaceStore((state) => state.removeTerminalPane)
   const resizeTerminal = useWorkspaceStore((state) => state.resizeTerminal)
+  const selectTerminalPane = useWorkspaceStore((state) => state.selectTerminalPane)
+  const setRailWidth = useWorkspaceStore((state) => state.setRailWidth)
+  const toggleSplitView = useWorkspaceStore((state) => state.toggleSplitView)
   const updateTerminalPaneSizes = useWorkspaceStore((state) => state.updateTerminalPaneSizes)
   const terminalProjectStateForActiveProject = useWorkspaceStore(
     (state) =>
@@ -93,6 +96,24 @@ function App(): ReactElement {
       (activeProjectId
         ? state.workspaceStateByProject[activeProjectId]?.terminalPaneSizes
         : null) ?? EMPTY_PANE_SIZES,
+  )
+  const activeTerminalPaneId = useWorkspaceStore(
+    (state) =>
+      (activeProjectId
+        ? state.workspaceStateByProject[activeProjectId]?.activePaneId
+        : null) ?? null,
+  )
+  const isTerminalSplitView = useWorkspaceStore(
+    (state) =>
+      (activeProjectId
+        ? state.workspaceStateByProject[activeProjectId]?.isSplitView
+        : null) ?? true,
+  )
+  const terminalRailWidth = useWorkspaceStore(
+    (state) =>
+      (activeProjectId
+        ? state.workspaceStateByProject[activeProjectId]?.railWidth
+        : null) ?? 44,
   )
   const requestPreviewWindow = (startLine: number, lineCount: number) => {
     void fetchFilePreview(activeProjectId, selectedFilePath, { lineCount, startLine })
@@ -272,6 +293,8 @@ function App(): ReactElement {
             <Panel defaultSize={30} minSize={20}>
               <Suspense fallback={<PanelFallback message="正在连接终端..." />}>
                 <WorkspaceTerminal
+                  activePaneId={activeTerminalPaneId}
+                  isSplitView={isTerminalSplitView}
                   onAddPane={() => activeProjectId && void addTerminalPane(activeProjectId)}
                   onLayout={(sizes) => {
                     if (activeProjectId) {
@@ -281,8 +304,24 @@ function App(): ReactElement {
                   onRemovePane={(paneId) =>
                     activeProjectId && void removeTerminalPane(activeProjectId, paneId)
                   }
+                  onSelectPane={(paneId) => {
+                    if (activeProjectId) {
+                      selectTerminalPane(activeProjectId, paneId)
+                    }
+                  }}
+                  onSetRailWidth={(width) => {
+                    if (activeProjectId) {
+                      setRailWidth(activeProjectId, width)
+                    }
+                  }}
+                  onToggleSplitView={() => {
+                    if (activeProjectId) {
+                      toggleSplitView(activeProjectId)
+                    }
+                  }}
                   paneSizes={terminalPaneSizes}
                   panes={buildTerminalPaneDescriptors(terminalProjectState)}
+                  railWidth={terminalRailWidth}
                   resizeTerminal={resizeTerminal}
                   theme={activeTheme.terminal}
                   writeTerminal={writeTerminal}

@@ -99,10 +99,14 @@ interface WorkspaceState {
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
   selectFile: (path: string) => Promise<void>
   selectProject: (projectId: string) => Promise<void>
+  selectTerminalPane: (projectId: string, paneId: string) => void
   selectTheme: (themeId: string) => void
   setDraftName: (value: string) => void
   setDraftPath: (value: string) => void
+  setActivePane: (projectId: string, paneId: string) => void
+  setRailWidth: (projectId: string, width: number) => void
   setTreePathExpanded: (projectId: string, path: string, expanded: boolean) => void
+  toggleSplitView: (projectId: string) => void
   setTreeExpandedPaths: (projectId: string, expandedPaths: Record<string, boolean>) => void
   submitProject: () => Promise<void>
   updateAgentStatus: (event: AgentStatusEvent) => void
@@ -169,8 +173,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         terminalProjectStateByProject,
         activeProjectId,
       ).paneOrder.length
+      const firstPaneId = paneCount > 0
+        ? ensureProjectTerminalState(terminalProjectStateByProject, activeProjectId).paneOrder[0]
+        : null
       workspaceStateByProject[activeProjectId] = {
         ...(bootstrap.workspaceState ?? createProjectWorkspaceState()),
+        activePaneId: bootstrap.workspaceState?.activePaneId ?? firstPaneId,
         selectedFilePath,
         terminalPaneSizes: normalizeTerminalPaneSizes(
           bootstrap.workspaceState?.terminalPaneSizes ?? [],
@@ -207,6 +215,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const hasNewPane =
         previousTerminalProjectState.paneOrder.length !== terminalProjectState.paneOrder.length
       const workspaceState = ensureProjectWorkspaceState(state.workspaceStateByProject, projectId)
+      const nextPaneCount = terminalProjectState.paneOrder.length
 
       return {
         projects: syncProjectTerminalState(
@@ -223,9 +232,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
               ...state.workspaceStateByProject,
               [projectId]: {
                 ...workspaceState,
+                activePaneId: terminal.paneId,
+                isSplitView: nextPaneCount > 1 ? true : workspaceState.isSplitView,
                 terminalPaneSizes: normalizeTerminalPaneSizes(
                   [],
-                  terminalProjectState.paneOrder.length,
+                  nextPaneCount,
                 ),
               },
             }
@@ -426,6 +437,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         state.workspaceStateByProject,
         projectId,
       )
+      const nextActivePaneId =
+        workspaceState.activePaneId === paneId
+          ? terminalProjectState.paneOrder[0] ?? null
+          : workspaceState.activePaneId
 
       return {
         projects: syncProjectTerminalState(
@@ -441,6 +456,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ...state.workspaceStateByProject,
           [projectId]: {
             ...workspaceState,
+            activePaneId: nextActivePaneId,
             terminalPaneSizes: normalizeTerminalPaneSizes(
               workspaceState.terminalPaneSizes,
               terminalProjectState.paneOrder.length,
@@ -498,6 +514,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         snapshot,
         workspaceState.selectedFilePath,
       )
+      const firstPaneId = terminalProjectState.paneOrder[0] ?? null
       set({
         activeProjectId: projectId,
         error: null,
@@ -514,6 +531,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ...get().workspaceStateByProject,
           [projectId]: {
             ...workspaceState,
+            activePaneId: workspaceState.activePaneId ?? firstPaneId,
             selectedFilePath,
             terminalPaneSizes: normalizeTerminalPaneSizes(
               workspaceState.terminalPaneSizes,
@@ -533,6 +551,60 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     storeThemeId(nextTheme.id)
     set({ activeThemeId: nextTheme.id })
+  },
+  selectTerminalPane: (projectId, paneId) => {
+    set((state) => ({
+      workspaceStateByProject: {
+        ...state.workspaceStateByProject,
+        [projectId]: {
+          ...ensureProjectWorkspaceState(state.workspaceStateByProject, projectId),
+          activePaneId: paneId,
+        },
+      },
+    }))
+    void persistProjectWorkspace(projectId, get)
+  },
+  setActivePane: (projectId, paneId) => {
+    set((state) => ({
+      workspaceStateByProject: {
+        ...state.workspaceStateByProject,
+        [projectId]: {
+          ...ensureProjectWorkspaceState(state.workspaceStateByProject, projectId),
+          activePaneId: paneId,
+        },
+      },
+    }))
+    void persistProjectWorkspace(projectId, get)
+  },
+  setRailWidth: (projectId, width) => {
+    set((state) => ({
+      workspaceStateByProject: {
+        ...state.workspaceStateByProject,
+        [projectId]: {
+          ...ensureProjectWorkspaceState(state.workspaceStateByProject, projectId),
+          railWidth: Math.max(44, Math.min(240, width)),
+        },
+      },
+    }))
+    void persistProjectWorkspace(projectId, get)
+  },
+  toggleSplitView: (projectId) => {
+    set((state) => {
+      const workspaceState = ensureProjectWorkspaceState(
+        state.workspaceStateByProject,
+        projectId,
+      )
+      return {
+        workspaceStateByProject: {
+          ...state.workspaceStateByProject,
+          [projectId]: {
+            ...workspaceState,
+            isSplitView: !workspaceState.isSplitView,
+          },
+        },
+      }
+    })
+    void persistProjectWorkspace(projectId, get)
   },
   setDraftName: (value) => {
     set({ draftName: value })
@@ -644,6 +716,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           state.workspaceStateByProject,
           event.projectId,
         )
+        const nextActivePaneId =
+          workspaceState.activePaneId === event.paneId
+            ? terminalProjectState.paneOrder[0] ?? null
+            : workspaceState.activePaneId
 
         return {
           projects: syncProjectTerminalState(
@@ -659,6 +735,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             ...state.workspaceStateByProject,
             [event.projectId]: {
               ...workspaceState,
+              activePaneId: nextActivePaneId,
               terminalPaneSizes: normalizeTerminalPaneSizes(
                 workspaceState.terminalPaneSizes,
                 terminalProjectState.paneOrder.length,
@@ -823,6 +900,9 @@ function createMockBootstrap(): AppBootstrap {
       }),
     ],
     workspaceState: {
+      activePaneId: 'main',
+      isSplitView: true,
+      railWidth: 44,
       selectedFilePath: 'src/App.tsx',
       terminalPaneSizes: [100],
       treeExpandedPaths: {},

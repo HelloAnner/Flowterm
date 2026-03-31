@@ -1,7 +1,17 @@
 import type { CSSProperties } from 'react'
 
+import catppuccinLatteData from '../../themes/catppuccin-latte.json'
+import catppuccinMochaData from '../../themes/catppuccin-mocha.json'
+import cursorDarkData from '../../themes/cursor-dark.json'
+import draculaData from '../../themes/dracula.json'
 import flowtermWarmDarkData from '../../themes/flowterm-warm-dark.json'
+import ghosttyDarkData from '../../themes/ghostty-dark.json'
 import githubDarkDefaultData from '../../themes/github-dark-default.json'
+import intellijLightData from '../../themes/intellij-light.json'
+import nightOwlData from '../../themes/night-owl.json'
+import nordData from '../../themes/nord.json'
+import oneDarkProData from '../../themes/one-dark-pro.json'
+import tokyoNightData from '../../themes/tokyo-night.json'
 
 export interface TerminalPalette {
   background: string
@@ -43,7 +53,17 @@ type ThemeJsonPayload = Omit<AppTheme, 'colorScheme'> & {
 
 const themes = [
   normalizeTheme(flowtermWarmDarkData),
+  normalizeTheme(cursorDarkData),
+  normalizeTheme(ghosttyDarkData),
   normalizeTheme(githubDarkDefaultData),
+  normalizeTheme(tokyoNightData),
+  normalizeTheme(nightOwlData),
+  normalizeTheme(nordData),
+  normalizeTheme(oneDarkProData),
+  normalizeTheme(catppuccinMochaData),
+  normalizeTheme(draculaData),
+  normalizeTheme(intellijLightData),
+  normalizeTheme(catppuccinLatteData),
 ]
 
 export const DEFAULT_THEME_ID = 'flowterm-warm-dark'
