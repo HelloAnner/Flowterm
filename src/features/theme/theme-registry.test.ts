@@ -87,4 +87,20 @@ describe('theme registry', () => {
       '--accent-glow': '#88c0d0',
     })
   })
+
+  it('derives light terminal surface tokens without falling back to dark fills', () => {
+    const lightTheme = getThemeById('intellij-light')
+
+    expect(resolveThemeCssVariables(lightTheme)).toMatchObject({
+      '--rail-active-bg': 'rgba(78, 143, 206, 0.08)',
+      '--rail-active-border': 'rgba(78, 143, 206, 0.4)',
+      '--rail-bg': '#f5f5f5',
+      '--rail-hover-bg': 'rgba(15, 23, 42, 0.04)',
+      '--terminal-depth-shadow': 'rgba(15, 23, 42, 0.03)',
+      '--terminal-toolbar-bg': '#f5f5f5',
+      '--terminal-pane-bg': '#ffffff',
+      '--terminal-glass-bg': 'rgba(15, 23, 42, 0.04)',
+      '--terminal-glass-strong': 'rgba(15, 23, 42, 0.06)',
+    })
+  })
 })

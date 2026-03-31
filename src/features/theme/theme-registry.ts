@@ -78,9 +78,12 @@ export function getThemeById(themeId: string): AppTheme {
 }
 
 export function resolveThemeCssVariables(theme: AppTheme): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(theme.ui).map(([token, value]) => [`--${token}`, value]),
-  )
+  return {
+    ...Object.fromEntries(
+      Object.entries(theme.ui).map(([token, value]) => [`--${token}`, value]),
+    ),
+    ...resolveDerivedThemeCssVariables(theme),
+  }
 }
 
 export function createSyntaxHighlightTheme(theme: AppTheme): Record<string, CSSProperties> {
@@ -167,5 +170,23 @@ function normalizeTheme(payload: ThemeJsonPayload): AppTheme {
   return {
     ...payload,
     colorScheme: payload.colorScheme === 'light' ? 'light' : 'dark',
+  }
+}
+
+function resolveDerivedThemeCssVariables(theme: AppTheme): Record<string, string> {
+  const isLight = theme.colorScheme === 'light'
+
+  return {
+    '--rail-active-bg': theme.ui['sidebar-active-bg'] ?? theme.ui['interactive-hover'] ?? 'transparent',
+    '--rail-active-border': theme.ui['sidebar-active-border'] ?? theme.ui['border-default'] ?? 'transparent',
+    '--rail-bg': theme.ui['bg-elevated'] ?? theme.terminal.background,
+    '--rail-hover-bg': isLight ? 'rgba(15, 23, 42, 0.04)' : 'rgba(255, 255, 255, 0.03)',
+    '--terminal-depth-shadow': isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(0, 0, 0, 0.2)',
+    '--terminal-toolbar-bg': theme.ui['bg-elevated'] ?? theme.terminal.background,
+    '--terminal-pane-bg': theme.ui['terminal-bg'] ?? theme.terminal.background,
+    '--terminal-tint-primary': theme.ui['ambient-primary'] ?? 'transparent',
+    '--terminal-tint-secondary': theme.ui['ambient-secondary'] ?? 'transparent',
+    '--terminal-glass-bg': isLight ? 'rgba(15, 23, 42, 0.04)' : 'rgba(255, 255, 255, 0.03)',
+    '--terminal-glass-strong': isLight ? 'rgba(15, 23, 42, 0.06)' : 'rgba(255, 255, 255, 0.05)',
   }
 }

@@ -134,7 +134,7 @@ export function TerminalSessionRail({
                 'group relative flex cursor-pointer items-center gap-2 transition-all',
                 isCompact ? 'justify-center rounded-xl px-0 py-2.5' : 'rounded-xl px-2.5 py-2',
                 isActive
-                  ? 'border border-[var(--rail-active-border)] bg-[var(--rail-active-bg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
+                  ? 'border border-[var(--rail-active-border)] bg-[var(--rail-active-bg)] shadow-[inset_0_1px_0_var(--terminal-glass-strong)]'
                   : 'border border-transparent hover:border-[var(--border-default)] hover:bg-[var(--rail-hover-bg)]',
               )}
               onClick={() => onSelectSession(session.id)}
@@ -185,7 +185,7 @@ export function TerminalSessionRail({
                 <button
                   aria-label="关闭终端"
                   className={cn(
-                    'shrink-0 rounded-md p-1 text-[var(--text-muted)] opacity-0 transition-opacity hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--accent-clay)]',
+                    'terminal-chip-button shrink-0 rounded-md p-1 text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--accent-clay)]',
                     isCompact ? 'absolute bottom-1 left-1/2 -translate-x-1/2 group-hover:opacity-100' : 'group-hover:opacity-100',
                   )}
                   onClick={(e) => {

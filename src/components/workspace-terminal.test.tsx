@@ -232,4 +232,61 @@ describe('WorkspaceTerminal', () => {
     expect(screen.queryByRole('button', { name: '分栏' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '单窗' })).not.toBeInTheDocument()
   })
+
+  it('uses semantic terminal surface classes instead of hardcoded dark glass fills', () => {
+    const { container } = render(
+      <WorkspaceTerminal
+        activePaneId="main"
+        isSplitView={true}
+        onAddPane={vi.fn()}
+        onLayout={vi.fn()}
+        onRemovePane={vi.fn()}
+        onSelectPane={vi.fn()}
+        onSetRailWidth={vi.fn()}
+        onToggleSplitView={vi.fn()}
+        paneSizes={[50, 50]}
+        panes={[
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'idle',
+            },
+            cwd: '/tmp/flowterm',
+            history: '$ pwd',
+            id: 'main',
+            projectId: 'project-a',
+            sessionId: 'session-a',
+            shellLabel: 'zsh',
+            state: 'idle',
+          },
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'running',
+            },
+            cwd: '/tmp/docs',
+            history: '$ ls',
+            id: 'pane-second',
+            projectId: 'project-a',
+            sessionId: 'session-b',
+            shellLabel: 'zsh',
+            state: 'running',
+          },
+        ]}
+        railWidth={160}
+        resizeTerminal={vi.fn().mockResolvedValue(undefined)}
+        theme={{
+          background: '#ffffff',
+          cursor: '#4e8fce',
+          foreground: '#1a1a1a',
+        }}
+        writeTerminal={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(container.querySelector('.terminal-glass-panel')).not.toBeNull()
+    expect(container.querySelector('.terminal-chip')).not.toBeNull()
+    expect(container.innerHTML).not.toContain('bg-[rgba(255,255,255,0.02)]')
+    expect(container.innerHTML).not.toContain('bg-[rgba(255,255,255,0.03)]')
+  })
 })

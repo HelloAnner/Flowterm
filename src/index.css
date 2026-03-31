@@ -15,16 +15,23 @@
   --accent-glow: #7ba7c8;
   --terminal-bg: #0f0f0f;
   --terminal-cursor: #c8a96e;
+  --terminal-toolbar-bg: #161616;
+  --terminal-pane-bg: #0f0f0f;
+  --terminal-tint-primary: rgba(200, 169, 110, 0.08);
+  --terminal-tint-secondary: rgba(123, 167, 200, 0.08);
+  --terminal-glass-bg: rgba(255, 255, 255, 0.03);
+  --terminal-glass-strong: rgba(255, 255, 255, 0.05);
   --ambient-primary: rgba(200, 169, 110, 0.08);
   --ambient-secondary: rgba(123, 167, 200, 0.08);
   --error-banner-bg: rgba(160, 96, 80, 0.12);
   --interactive-hover: rgba(200, 169, 110, 0.12);
   --terminal-divider: #0a0a0a;
   --terminal-divider-strong: #1c1c1c;
-  --rail-bg: #131313;
+  --rail-bg: #161616;
   --rail-active-bg: rgba(200, 169, 110, 0.09);
   --rail-active-border: rgba(200, 169, 110, 0.36);
   --rail-hover-bg: rgba(255, 255, 255, 0.03);
+  --terminal-depth-shadow: rgba(0, 0, 0, 0.2);
   --activity-glow: 0 0 6px rgba(122, 158, 138, 0.7);
   --activity-halo: rgba(122, 158, 138, 0.18);
   --dirty-glow: 0 0 6px rgba(200, 169, 110, 0.45);
@@ -235,39 +242,39 @@ pre {
 
 .terminal-surface {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 18%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.2), transparent 22%),
-    var(--terminal-bg);
+    linear-gradient(180deg, var(--terminal-glass-bg), transparent 18%),
+    linear-gradient(180deg, var(--terminal-depth-shadow), transparent 22%),
+    var(--terminal-pane-bg);
 }
 
 .terminal-toolbar {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 100%),
-    rgba(18, 18, 18, 0.92);
+    linear-gradient(180deg, var(--terminal-tint-primary), transparent 100%),
+    var(--terminal-toolbar-bg);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 10px 40px rgba(0, 0, 0, 0.18);
+    inset 0 1px 0 var(--terminal-glass-bg),
+    var(--surface-shadow);
 }
 
 .terminal-toolbar-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--terminal-glass-bg);
   color: var(--text-primary);
 }
 
 .terminal-pane-shell {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 22%),
-    linear-gradient(180deg, rgba(12, 12, 12, 0.92), rgba(12, 12, 12, 0.98));
+    linear-gradient(180deg, var(--terminal-tint-primary), transparent 22%),
+    var(--terminal-pane-bg);
 }
 
 .terminal-pane-header {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 1px 0 var(--terminal-glass-bg);
 }
 
 .terminal-pane-viewport {
   background:
-    radial-gradient(circle at top left, rgba(200, 169, 110, 0.04), transparent 26%),
-    radial-gradient(circle at top right, rgba(123, 167, 200, 0.04), transparent 20%);
+    radial-gradient(circle at top left, var(--terminal-tint-primary), transparent 26%),
+    radial-gradient(circle at top right, var(--terminal-tint-secondary), transparent 20%);
 }
 
 .terminal-pane-viewport .xterm {
@@ -280,4 +287,17 @@ pre {
 
 .terminal-session-rail {
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.03);
+}
+
+.terminal-glass-panel {
+  background: var(--terminal-glass-bg);
+  box-shadow: inset 0 1px 0 var(--terminal-glass-strong);
+}
+
+.terminal-chip {
+  background: var(--terminal-glass-bg);
+}
+
+.terminal-chip-button:hover {
+  background: var(--terminal-glass-bg);
 }

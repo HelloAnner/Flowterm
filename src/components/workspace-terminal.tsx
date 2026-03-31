@@ -100,7 +100,7 @@ export function WorkspaceTerminal({
     <div className="terminal-surface flex h-full min-h-0 flex-col bg-[var(--terminal-bg)]">
       <div className="terminal-toolbar flex h-8 shrink-0 items-center justify-between border-b border-[var(--border-subtle)] px-3">
         <span className="font-mono text-[11px] text-[var(--text-muted)]">终端</span>
-        <div className="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.02)] p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div className="terminal-glass-panel flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] p-0.5">
           <button
             aria-label={panes.length === 0 ? '新建终端' : '垂直分屏'}
             className={cn(
@@ -132,7 +132,7 @@ export function WorkspaceTerminal({
       </div>
 
       {bannerCopy ? (
-        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[rgba(255,255,255,0.02)] px-4">
+        <div className="terminal-glass-panel flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] px-4">
           <span
             aria-hidden="true"
             className={cn(
@@ -351,7 +351,7 @@ function TerminalPane({
         </div>
         <div className="flex items-center gap-2">
           {pane.cwd ? (
-            <span className="max-w-40 truncate rounded-md bg-[rgba(255,255,255,0.03)] px-2 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">
+            <span className="terminal-chip max-w-40 truncate rounded-md px-2 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">
               {resolveCwdLabel(pane.cwd)}
             </span>
           ) : null}
@@ -361,7 +361,7 @@ function TerminalPane({
           {onRemove ? (
             <button
               aria-label="关闭终端"
-              className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--text-secondary)]"
+              className="terminal-chip-button rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
               onClick={onRemove}
               title="关闭终端"
               type="button"
