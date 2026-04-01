@@ -10,7 +10,7 @@ import {
 
 const MAX_POOL_SIZE = 10
 const FONT_FAMILY =
-  '"Berkeley Mono", "Geist Mono", "JetBrains Mono", ui-monospace, monospace'
+  '"Berkeley Mono", "Geist Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", ui-monospace, monospace'
 
 export interface TerminalTheme {
   background: string
@@ -86,9 +86,14 @@ export function acquireTerminal(
   container.style.height = '100%'
 
   const terminal = new Terminal({
+    allowTransparency: false,
     cursorBlink: true,
+    cursorStyle: 'bar',
+    cursorWidth: 2,
     fontFamily: FONT_FAMILY,
     fontSize: typography.fontSize,
+    fontWeight: '400',
+    fontWeightBold: '600',
     letterSpacing: typography.letterSpacing,
     lineHeight: typography.lineHeight,
     theme: {

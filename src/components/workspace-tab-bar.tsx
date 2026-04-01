@@ -7,16 +7,17 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react'
-import { Check, History, Plus, X } from 'lucide-react'
+import { Check, Flame, History, Plus, X } from 'lucide-react'
 
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { cn } from '../lib/utils'
-import type { ProjectSummary } from '../lib/contracts'
+import type { ProjectSummary, RecentProject } from '../lib/contracts'
 
 interface WorkspaceTabBarProps {
   activeProjectId: string | null
   onAddProject: () => void
+  onOpenRecentProject: (path: string) => void
   onRemoveProject: (projectId: string) => void
   onReorderProjects: (
     draggedProjectId: string,
@@ -25,12 +26,13 @@ interface WorkspaceTabBarProps {
   ) => void
   onSelectProject: (projectId: string) => void
   projects: ProjectSummary[]
-  recentProjects: ProjectSummary[]
+  recentProjects: RecentProject[]
 }
 
 export const WorkspaceTabBar = memo(function WorkspaceTabBar({
   activeProjectId,
   onAddProject,
+  onOpenRecentProject,
   onRemoveProject,
   onReorderProjects,
   onSelectProject,
@@ -39,7 +41,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
 }: WorkspaceTabBarProps): ReactElement {
   const [isRecentMenuOpen, setIsRecentMenuOpen] = useState(false)
   const [recentProjectQuery, setRecentProjectQuery] = useState('')
-  const [highlightedProjectId, setHighlightedProjectId] = useState<string | null>(null)
+  const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
   const [dropIndicator, setDropIndicator] = useState<{
     position: 'after' | 'before'
     projectId: string
@@ -47,6 +49,10 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
   const draggedProjectIdRef = useRef<string | null>(null)
   const recentMenuRef = useRef<HTMLDivElement | null>(null)
   const recentSearchInputRef = useRef<HTMLInputElement | null>(null)
+  const activeProjectPath = useMemo(
+    () => projects.find((p) => p.id === activeProjectId)?.path ?? null,
+    [activeProjectId, projects],
+  )
   const filteredProjects = useMemo(() => {
     const normalizedQuery = recentProjectQuery.trim().toLowerCase()
 
@@ -58,24 +64,24 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
       `${project.name} ${project.path}`.toLowerCase().includes(normalizedQuery),
     )
   }, [recentProjectQuery, recentProjects])
-  const resolvedHighlightedProjectId = useMemo(() => {
+  const resolvedHighlightedPath = useMemo(() => {
     if (!isRecentMenuOpen) {
-      return highlightedProjectId
+      return highlightedPath
     }
 
     if (
-      highlightedProjectId &&
-      filteredProjects.some((project) => project.id === highlightedProjectId)
+      highlightedPath &&
+      filteredProjects.some((project) => project.path === highlightedPath)
     ) {
-      return highlightedProjectId
+      return highlightedPath
     }
 
-    if (filteredProjects.some((project) => project.id === activeProjectId)) {
-      return activeProjectId
+    if (activeProjectPath && filteredProjects.some((project) => project.path === activeProjectPath)) {
+      return activeProjectPath
     }
 
-    return filteredProjects[0]?.id ?? null
-  }, [activeProjectId, filteredProjects, highlightedProjectId, isRecentMenuOpen])
+    return filteredProjects[0]?.path ?? null
+  }, [activeProjectPath, filteredProjects, highlightedPath, isRecentMenuOpen])
 
   useEffect(() => {
     if (!isRecentMenuOpen) {
@@ -116,11 +122,18 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
     })
   }, [isRecentMenuOpen])
 
-  function selectRecentProject(projectId: string): void {
+  function selectRecentProject(path: string): void {
     setIsRecentMenuOpen(false)
     setRecentProjectQuery('')
-    setHighlightedProjectId(projectId)
-    void onSelectProject(projectId)
+    setHighlightedPath(path)
+
+    const openProject = projects.find((p) => p.path === path)
+
+    if (openProject) {
+      void onSelectProject(openProject.id)
+    } else {
+      void onOpenRecentProject(path)
+    }
   }
 
   function moveHighlight(direction: 'next' | 'previous'): void {
@@ -129,7 +142,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
     }
 
     const currentIndex = filteredProjects.findIndex(
-      (project) => project.id === resolvedHighlightedProjectId,
+      (project) => project.path === resolvedHighlightedPath,
     )
     const baseIndex = currentIndex >= 0 ? currentIndex : 0
     const nextIndex =
@@ -137,7 +150,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
         ? (baseIndex + 1) % filteredProjects.length
         : (baseIndex - 1 + filteredProjects.length) % filteredProjects.length
 
-    setHighlightedProjectId(filteredProjects[nextIndex]?.id ?? null)
+    setHighlightedPath(filteredProjects[nextIndex]?.path ?? null)
   }
 
   function handleRecentSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
@@ -153,9 +166,9 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
       return
     }
 
-    if (event.key === 'Enter' && resolvedHighlightedProjectId) {
+    if (event.key === 'Enter' && resolvedHighlightedPath) {
       event.preventDefault()
-      selectRecentProject(resolvedHighlightedProjectId)
+      selectRecentProject(resolvedHighlightedPath)
     }
   }
 
@@ -165,7 +178,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
 
       if (nextValue) {
         setRecentProjectQuery('')
-        setHighlightedProjectId(activeProjectId ?? recentProjects[0]?.id ?? null)
+        setHighlightedPath(activeProjectPath ?? recentProjects[0]?.path ?? null)
       }
 
       return nextValue
@@ -175,11 +188,8 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
   return (
     <header className="tab-bar" data-tauri-drag-region>
       <div className="tab-bar__brand">
-        <span className="tab-bar__brand-label">
-          Flowterm
-        </span>
+        <Flame className="h-4 w-4 text-[var(--accent-amber)]" />
       </div>
-      <div className="tab-bar__divider" />
       <div
         aria-label="项目标签"
         className="tab-bar__tabs"
@@ -191,7 +201,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
           const showsDirtyIndicator = project.changedFileCount > 0
 
           return (
-            <button
+            <div
               aria-current={isActive ? 'page' : undefined}
               aria-selected={isActive}
               className={cn(
@@ -256,8 +266,14 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
                 setDropIndicator(null)
               }}
               onClick={() => void onSelectProject(project.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  void onSelectProject(project.id)
+                }
+              }}
               role="tab"
-              type="button"
+              tabIndex={0}
             >
               <span
                 aria-hidden="true"
@@ -302,7 +318,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
               >
                 <X className="h-3 w-3" />
               </button>
-            </button>
+            </div>
           )
         })}
       </div>
@@ -311,7 +327,7 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
           aria-expanded={isRecentMenuOpen}
           aria-haspopup="menu"
           aria-label="最近项目"
-          disabled={projects.length === 0}
+          disabled={recentProjects.length === 0}
           onClick={toggleRecentMenu}
           size="icon"
           variant="ghost"
@@ -345,8 +361,9 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
                   没有匹配的最近项目
                 </div>
               ) : filteredProjects.map((project) => {
-                const isActive = project.id === activeProjectId
-                const isHighlighted = project.id === resolvedHighlightedProjectId
+                const isOpen = projects.some((p) => p.path === project.path)
+                const isActive = project.path === activeProjectPath
+                const isHighlighted = project.path === resolvedHighlightedPath
 
                 return (
                   <button
@@ -354,9 +371,9 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
                       'flex items-start gap-3 px-4 py-3 text-left transition-colors',
                       isHighlighted ? 'bg-[var(--rail-hover-bg)]' : 'hover:bg-[var(--rail-hover-bg)]',
                     )}
-                    key={project.id}
-                    onClick={() => selectRecentProject(project.id)}
-                    onMouseEnter={() => setHighlightedProjectId(project.id)}
+                    key={project.path}
+                    onClick={() => selectRecentProject(project.path)}
+                    onMouseEnter={() => setHighlightedPath(project.path)}
                     role="menuitem"
                     type="button"
                   >
@@ -369,6 +386,10 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
                         {isActive ? (
                           <span className="rounded-full bg-[var(--rail-active-bg)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)]">
                             当前
+                          </span>
+                        ) : isOpen ? (
+                          <span className="rounded-full bg-[var(--rail-active-bg)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)]">
+                            已打开
                           </span>
                         ) : null}
                       </span>

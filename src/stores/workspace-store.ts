@@ -2,6 +2,13 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { create } from 'zustand'
 
 import {
+  DEFAULT_KEYBINDINGS,
+  readStoredKeybindings,
+  storeKeybindings,
+  type KeybindingAction,
+  type KeyCombo,
+} from '../features/workspace/keybindings'
+import {
   DEFAULT_THEME_ID,
   getThemeById,
   readStoredThemeId,
@@ -15,6 +22,7 @@ import {
   closeTerminal as closeTerminalCommand,
   createProjectEntry as createProjectEntryCommand,
   isTauriEnvironment,
+  listRecentProjects as listRecentProjectsCommand,
   listTerminals,
   readFilePreview,
   readProjectWorkspace,
@@ -32,6 +40,7 @@ import type {
   ProjectSnapshot,
   ProjectSummary,
   ProjectWorkspaceState,
+  RecentProject,
   TerminalAttachment,
   TerminalStateEvent,
 } from '../lib/contracts'
@@ -52,11 +61,6 @@ import {
   reorderProjectTabOrder,
   storeProjectTabOrder,
 } from '../features/workspace/project-tab-order'
-import {
-  bumpProjectToFront,
-  readRecentProjectIds,
-  storeRecentProjectIds,
-} from '../features/workspace/project-recents'
 import { shouldRefreshPreview } from '../features/workspace/project-refresh'
 import { resolveSelectedFilePath } from '../features/workspace/selection'
 import { toggleExpandedPath } from '../features/workspace/tree-expansion'
@@ -73,7 +77,7 @@ import { destroyTerminal } from '../features/workspace/terminal-pool'
 import { clearTerminalStream } from '../features/workspace/terminal-stream'
 import { createWorkspacePersistScheduler } from '../features/workspace/workspace-persist'
 
-const MAX_TERMINAL_PANES = 3
+const MAX_TERMINAL_PANES = 8
 const PREVIEW_CHUNK_SIZE = 200
 const PROJECT_ACTIVATION_SETTLE_MS = 80
 const workspacePersistScheduler = createWorkspacePersistScheduler()
@@ -94,10 +98,11 @@ interface WorkspaceState {
   previewRequestId: number
   projectSelectionRequestId: number
   projects: ProjectSummary[]
-  recentProjectIds: string[]
+  recentProjects: RecentProject[]
   selectedFilePath: string | null
   snapshot: ProjectSnapshot | null
   snapshotByProject: Record<string, ProjectSnapshot>
+  keybindings: import('../features/workspace/keybindings').KeybindingMap
   terminalTypography: TerminalTypography
   terminalProjectStateByProject: Record<string, TerminalProjectState>
   workspaceStateByProject: Record<string, ProjectWorkspaceState>
@@ -119,9 +124,12 @@ interface WorkspaceState {
     },
   ) => Promise<void>
   openProjectDialog: () => Promise<void>
+  refreshRecentProjects: () => Promise<void>
   cycleProjectSelection: (direction: 'next' | 'previous') => Promise<void>
+  hydrateKeybindings: () => void
   hydrateThemePreference: () => void
   hydrateTerminalTypography: () => void
+  setKeybinding: (action: import('../features/workspace/keybindings').KeybindingAction, combos: import('../features/workspace/keybindings').KeyCombo[], scope?: import('../features/workspace/keybindings').KeybindingScope) => void
   refreshActiveProject: (
     projectId?: string,
     options?: {
@@ -164,8 +172,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   previewRequestId: 0,
   projectSelectionRequestId: 0,
   projects: [],
-  recentProjectIds: [],
+  recentProjects: [],
   selectedFilePath: null,
+  keybindings: DEFAULT_KEYBINDINGS,
   snapshot: null,
   snapshotByProject: {},
   terminalTypography: DEFAULT_TERMINAL_TYPOGRAPHY,
@@ -181,13 +190,47 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return
     }
 
-    await get().attachTerminalPane(projectId, createPaneId())
+    const paneId = createPaneId()
+
+    // Optimistic update — terminal appears instantly before IPC completes
+    set((state) => {
+      const ts = ensureProjectTerminalState(state.terminalProjectStateByProject, projectId)
+      const ws = ensureProjectWorkspaceState(state.workspaceStateByProject, projectId)
+
+      return {
+        terminalProjectStateByProject: {
+          ...state.terminalProjectStateByProject,
+          [projectId]: {
+            paneOrder: [...ts.paneOrder, paneId],
+            panesById: {
+              ...ts.panesById,
+              [paneId]: {
+                agentStatus: { agent: 'unknown', phase: 'idle' },
+                cwd: null,
+                history: '',
+                paneId,
+                projectId,
+                sessionId: `pending:${paneId}`,
+                shellLabel: 'shell',
+                state: 'idle',
+              },
+            },
+          },
+        },
+        workspaceStateByProject: {
+          ...state.workspaceStateByProject,
+          [projectId]: {
+            ...ws,
+            activePaneId: paneId,
+          },
+        },
+      }
+    })
+
+    // Background: real IPC replaces the placeholder
+    await get().attachTerminalPane(projectId, paneId)
   },
   applyBootstrap: (bootstrap) => {
-    const recentProjectIds = resolveRecentProjectIds(
-      bootstrap.projects,
-      bootstrap.activeProjectId,
-    )
     const projects = resolveProjectTabOrder(bootstrap.projects)
     const selectedFilePath = resolveSnapshotSelection(
       bootstrap.snapshot,
@@ -255,7 +298,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       isFilePreviewLoading: Boolean(bootstrap.activeProjectId && selectedFilePath),
       isProjectSwitching: false,
       projects,
-      recentProjectIds,
       selectedFilePath,
       snapshot: bootstrap.snapshot,
       snapshotByProject,
@@ -296,7 +338,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
               [projectId]: {
                 ...workspaceState,
                 activePaneId: terminal.paneId,
-                isSplitView: nextPaneCount > 1 ? true : workspaceState.isSplitView,
                 terminalPaneSizes: normalizeTerminalPaneSizes(
                   [],
                   nextPaneCount,
@@ -322,6 +363,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       const bootstrap = await bootstrapApp()
       get().applyBootstrap(bootstrap)
+      void get().refreshRecentProjects()
 
       if (bootstrap.activeProjectId && get().selectedFilePath) {
         void get().fetchFilePreview(bootstrap.activeProjectId, get().selectedFilePath)
@@ -491,6 +533,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const bootstrap = await addProjectCommand(path, inferProjectNameFromPath(path) || undefined)
       get().applyBootstrap(bootstrap)
+      void get().refreshRecentProjects()
 
       if (bootstrap.activeProjectId && get().selectedFilePath) {
         void get().fetchFilePreview(bootstrap.activeProjectId, get().selectedFilePath)
@@ -499,11 +542,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ error: error instanceof Error ? error.message : '添加项目失败' })
     }
   },
+  refreshRecentProjects: async () => {
+    if (!isTauriEnvironment()) {
+      return
+    }
+
+    try {
+      const recentProjects = await listRecentProjectsCommand()
+      set({ recentProjects })
+    } catch {
+      // silent — non-critical
+    }
+  },
+  hydrateKeybindings: () => {
+    set({ keybindings: readStoredKeybindings() })
+  },
   hydrateThemePreference: () => {
     set({ activeThemeId: readStoredThemeId() })
   },
   hydrateTerminalTypography: () => {
     set({ terminalTypography: readStoredTerminalTypography() })
+  },
+  setKeybinding: (action: KeybindingAction, combos: KeyCombo[], scope?: import('../features/workspace/keybindings').KeybindingScope) => {
+    const current = get().keybindings[action]
+    const next = { ...get().keybindings, [action]: { combos, scope: scope ?? current.scope } }
+    storeKeybindings(next)
+    set({ keybindings: next })
   },
   cycleProjectSelection: async (direction) => {
     const { activeProjectId, projects } = get()
@@ -640,6 +704,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     destroyTerminal(pane.sessionId)
     clearTerminalStream(pane.sessionId)
 
+    // Determine the previous pane before removing
+    const closedIndex = projectState.paneOrder.indexOf(paneId)
+
     set((state) => {
       const terminalProjectState = removeTerminalPaneState(
         ensureProjectTerminalState(state.terminalProjectStateByProject, projectId),
@@ -649,10 +716,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         state.workspaceStateByProject,
         projectId,
       )
-      const nextActivePaneId =
-        workspaceState.activePaneId === paneId
-          ? terminalProjectState.paneOrder[0] ?? null
-          : workspaceState.activePaneId
+
+      let nextActivePaneId = workspaceState.activePaneId
+      if (workspaceState.activePaneId === paneId) {
+        // Prefer the pane just before the closed one, fall back to first
+        const prevIndex = Math.max(0, closedIndex - 1)
+        nextActivePaneId = terminalProjectState.paneOrder[prevIndex] ?? null
+      }
 
       return {
         projects: syncProjectTerminalState(
@@ -726,7 +796,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     const requestId = previousState.projectSelectionRequestId + 1
-    const nextRecentProjectIds = bumpProjectToFront(previousState.recentProjectIds, projectId)
     const cachedSnapshot = previousState.snapshotByProject[projectId] ?? null
     const cachedWorkspaceState = ensureProjectWorkspaceState(
       previousState.workspaceStateByProject,
@@ -760,7 +829,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       isFilePreviewLoading: Boolean(cachedSelectedFilePath && !cachedFilePreview),
       isProjectSwitching: false,
       projectSelectionRequestId: requestId,
-      recentProjectIds: nextRecentProjectIds,
       selectedFilePath: cachedSelectedFilePath,
       snapshot: cachedSnapshot,
     })
@@ -780,7 +848,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           return
         }
 
-        storeRecentProjectIds(settled.recentProjectIds)
         void persistProjectWorkspace(projectId, get)
 
         void activateProject(projectId)
@@ -829,8 +896,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     // ── Cold path: first visit to this project ──
     // Must await backend to load snapshot, workspace state, and terminals.
-    storeRecentProjectIds(nextRecentProjectIds)
-
     try {
       const [snapshot, workspaceState, terminals] = await Promise.all([
         activateProject(projectId),
@@ -873,7 +938,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         isFilePreviewLoading: Boolean(selectedFilePath && !coldCachedPreview),
         isProjectSwitching: false,
         projects: replaceProjectSummary(currentState.projects, snapshot.project),
-        recentProjectIds: currentState.recentProjectIds,
         selectedFilePath,
         snapshot,
         snapshotByProject: {
@@ -912,7 +976,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         filePreview: previousState.filePreview,
         isFilePreviewLoading: previousState.isFilePreviewLoading,
         isProjectSwitching: false,
-        recentProjectIds: previousState.recentProjectIds,
         selectedFilePath: previousState.selectedFilePath,
         snapshot: previousState.snapshot,
       })
@@ -1058,6 +1121,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   updateTerminalState: (event) => {
     if (event.state === 'exited') {
+      const prevPaneOrder = ensureProjectTerminalState(
+        get().terminalProjectStateByProject,
+        event.projectId,
+      ).paneOrder
+      const closedIndex = prevPaneOrder.indexOf(event.paneId)
+
       destroyTerminal(event.sessionId)
       clearTerminalStream(event.sessionId)
       set((state) => {
@@ -1069,10 +1138,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           state.workspaceStateByProject,
           event.projectId,
         )
-        const nextActivePaneId =
-          workspaceState.activePaneId === event.paneId
-            ? terminalProjectState.paneOrder[0] ?? null
-            : workspaceState.activePaneId
+
+        let nextActivePaneId = workspaceState.activePaneId
+        if (workspaceState.activePaneId === event.paneId) {
+          const prevIndex = Math.max(0, closedIndex - 1)
+          nextActivePaneId = terminalProjectState.paneOrder[prevIndex] ?? null
+        }
 
         return {
           projects: syncProjectTerminalState(
@@ -1098,6 +1169,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         }
       })
       void persistProjectWorkspace(event.projectId, get)
+
+      // If the last terminal exited, auto-create a replacement
+      const currentPaneOrder = ensureProjectTerminalState(
+        get().terminalProjectStateByProject,
+        event.projectId,
+      ).paneOrder
+      if (currentPaneOrder.length === 0) {
+        void get().addTerminalPane(event.projectId)
+      }
+
       return
     }
 
@@ -1185,27 +1266,6 @@ function getCachedFilePreview(
   return filePreviewByCacheKey[createPreviewCacheKey(projectId, path)] ?? null
 }
 
-function resolveRecentProjectIds(
-  projects: ProjectSummary[],
-  activeProjectId: string | null,
-): string[] {
-  const storedRecentProjectIds = readRecentProjectIds()
-  const nextRecentProjectIds = bumpProjectToFront(storedRecentProjectIds, activeProjectId)
-  const visibleProjectIds = new Set(projects.map((project) => project.id))
-  const filteredRecentProjectIds = nextRecentProjectIds.filter((projectId) =>
-    visibleProjectIds.has(projectId),
-  )
-  const completedRecentProjectIds = [
-    ...filteredRecentProjectIds,
-    ...projects
-      .map((project) => project.id)
-      .filter((projectId) => !filteredRecentProjectIds.includes(projectId)),
-  ]
-
-  storeRecentProjectIds(completedRecentProjectIds)
-
-  return completedRecentProjectIds
-}
 
 function resolveProjectTabOrder(projects: ProjectSummary[]): ProjectSummary[] {
   const storedProjectTabOrder = readProjectTabOrder()

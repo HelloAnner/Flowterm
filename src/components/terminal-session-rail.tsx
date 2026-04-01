@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Plus, SplitSquareVertical } from 'lucide-react'
+import { Plus, SplitSquareVertical, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { TerminalState } from '../lib/contracts'
 
@@ -26,12 +26,13 @@ export const TerminalSessionRail = memo(function TerminalSessionRail({
   canAdd,
   isSplitView,
   onAddSession,
-  onRemoveSession: _onRemoveSession,
+  onRemoveSession,
   onSelectSession,
   onToggleSplitView,
   sessions,
 }: TerminalSessionRailProps): React.ReactElement {
-  void _onRemoveSession
+  const canRemove = sessions.length > 1
+
   return (
     <div className="terminal-session-strip flex shrink-0 items-center gap-1 border-t border-[var(--border-subtle)] px-2 py-1.5">
       {/* Session chips */}
@@ -39,7 +40,7 @@ export const TerminalSessionRail = memo(function TerminalSessionRail({
         const isActive = session.id === activeSessionId
 
         return (
-          <button
+          <div
             key={session.id}
             className={cn(
               'terminal-chip group flex items-center gap-1.5 px-2.5 py-1 transition-all duration-200',
@@ -49,7 +50,6 @@ export const TerminalSessionRail = memo(function TerminalSessionRail({
             )}
             onClick={() => onSelectSession(session.id)}
             title={`${session.name} · ${session.shellLabel}`}
-            type="button"
           >
             <span
               className={cn(
@@ -61,7 +61,20 @@ export const TerminalSessionRail = memo(function TerminalSessionRail({
               )}
             />
             <span className="max-w-24 truncate text-[10px]">{session.name}</span>
-          </button>
+            {canRemove ? (
+              <button
+                aria-label={`关闭 ${session.name}`}
+                className="ml-0.5 flex h-3.5 w-3.5 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--text-primary)]"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRemoveSession(session.id)
+                }}
+                type="button"
+              >
+                <X className="h-2.5 w-2.5" />
+              </button>
+            ) : null}
+          </div>
         )
       })}
 

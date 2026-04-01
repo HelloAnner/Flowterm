@@ -1,15 +1,15 @@
-import { FolderTree, LayoutGrid, Settings2 } from 'lucide-react'
+import { FolderTree, GitBranch, LayoutGrid, Settings2 } from 'lucide-react'
 import { memo, type ReactElement, type ReactNode, useMemo } from 'react'
 
 import { summarizeProjectSnapshot } from '../features/workspace/tree'
 import type { ProjectFileEntry } from '../lib/contracts'
 import { cn } from '../lib/utils'
 
-export type WorkspaceSidebarView = 'board' | 'settings' | 'tree'
+export type WorkspaceSidebarView = 'board' | 'git' | 'settings' | 'tree'
 
 interface WorkspaceSidebarProps {
   cardCount?: number
-  children: ReactNode
+  children?: ReactNode
   files: ProjectFileEntry[]
   onSelectView: (view: WorkspaceSidebarView) => void
   selectedView: WorkspaceSidebarView
@@ -69,6 +69,20 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <LayoutGrid className="h-4 w-4 shrink-0" />
         </button>
         <button
+          aria-label="Git 操作"
+          className={cn(
+            'group relative mt-1 flex w-full flex-col items-center gap-1 rounded-lg p-2 text-[var(--text-muted)] transition-all',
+            selectedView === 'git'
+              ? 'bg-[var(--rail-active-bg)] text-[var(--text-primary)]'
+              : 'hover:bg-[var(--rail-hover-bg)] hover:text-[var(--text-secondary)]',
+          )}
+          onClick={() => onSelectView('git')}
+          title="Git 操作"
+          type="button"
+        >
+          <GitBranch className="h-4 w-4 shrink-0" />
+        </button>
+        <button
           aria-label="设置"
           className={cn(
             'mt-auto flex w-full flex-col items-center gap-1 rounded-lg p-2 text-[var(--text-muted)] transition-all',
@@ -83,7 +97,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <Settings2 className="h-4 w-4 shrink-0" />
         </button>
       </nav>
-      <div className="min-w-0 flex-1">{children}</div>
+      {children ? <div className="min-w-0 flex-1">{children}</div> : null}
     </div>
   )
 })

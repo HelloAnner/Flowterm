@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, GripVertical } from 'lucide-react'
 import {
   Panel,
   PanelGroup,
@@ -29,7 +29,8 @@ import {
   applyThemeToDocument,
   getThemeById,
 } from './features/theme/theme-registry'
-import { orderProjectsByRecency } from './features/workspace/project-recents'
+
+import { matchesActionInScope, type KeybindingScope } from './features/workspace/keybindings'
 import {
   buildTerminalPaneDescriptors,
   createTerminalProjectState,
@@ -38,6 +39,7 @@ import { publishTerminalOutput } from './features/workspace/terminal-stream'
 import { scheduleIdleTask } from './features/workspace/idle-task'
 import { maybeStartPerformanceProbe } from './e2e/performance-probe'
 import {
+  addProject as addProjectCommand,
   isTauriEnvironment,
   listenAgentStatus,
   listenProjectRefresh,
@@ -51,12 +53,14 @@ import { useWorkspaceStore } from './stores/workspace-store'
 
 const EMPTY_TERMINAL_PROJECT_STATE = createTerminalProjectState()
 const EMPTY_EXPANDED_PATHS: Record<string, boolean> = {}
-const EMPTY_PANE_SIZES: number[] = []
 const KnowledgeBoard = lazy(async () => ({
   default: (await import('./components/knowledge-board')).KnowledgeBoard,
 }))
 const WorkspaceDiffPanel = lazy(async () => ({
   default: (await import('./components/workspace-diff-panel')).WorkspaceDiffPanel,
+}))
+const WorkspaceGitPanel = lazy(async () => ({
+  default: (await import('./components/workspace-git-panel')).WorkspaceGitPanel,
 }))
 const WorkspaceTerminal = lazy(async () => ({
   default: (await import('./components/workspace-terminal')).WorkspaceTerminal,
@@ -76,8 +80,9 @@ function App(): ReactElement {
   const bootstrap = useWorkspaceStore((s) => s.bootstrap)
   const error = useWorkspaceStore((s) => s.error)
   const isBooting = useWorkspaceStore((s) => s.isBooting)
+  const keybindings = useWorkspaceStore((s) => s.keybindings)
   const projects = useWorkspaceStore((s) => s.projects)
-  const recentProjectIds = useWorkspaceStore((s) => s.recentProjectIds)
+  const recentProjects = useWorkspaceStore((s) => s.recentProjects)
   const snapshot = useWorkspaceStore((s) => s.snapshot)
   const terminalTypography = useWorkspaceStore((s) => s.terminalTypography)
 
@@ -94,11 +99,16 @@ function App(): ReactElement {
 
   // Store actions (stable references — never trigger re-renders)
   const addTerminalPane = useWorkspaceStore((s) => s.addTerminalPane)
+  const removeTerminalPane = useWorkspaceStore((s) => s.removeTerminalPane)
+  const applyBootstrap = useWorkspaceStore((s) => s.applyBootstrap)
   const cycleProjectSelection = useWorkspaceStore((s) => s.cycleProjectSelection)
+  const hydrateKeybindings = useWorkspaceStore((s) => s.hydrateKeybindings)
   const hydrateTerminalTypography = useWorkspaceStore((s) => s.hydrateTerminalTypography)
   const hydrateThemePreference = useWorkspaceStore((s) => s.hydrateThemePreference)
+  const setKeybinding = useWorkspaceStore((s) => s.setKeybinding)
   const openProjectDialog = useWorkspaceStore((s) => s.openProjectDialog)
   const refreshActiveProject = useWorkspaceStore((s) => s.refreshActiveProject)
+  const refreshRecentProjects = useWorkspaceStore((s) => s.refreshRecentProjects)
   const removeProject = useWorkspaceStore((s) => s.removeProject)
   const reorderProjects = useWorkspaceStore((s) => s.reorderProjects)
   const selectFile = useWorkspaceStore((s) => s.selectFile)
@@ -113,10 +123,6 @@ function App(): ReactElement {
   const activeTheme = useMemo(() => getThemeById(resolvedThemeId), [resolvedThemeId])
 
   // Derived values
-  const recentProjects = useMemo(
-    () => orderProjectsByRecency(projects, recentProjectIds),
-    [projects, recentProjectIds],
-  )
   const commandPaletteProjects = useMemo(
     () =>
       projects.map((project) => ({
@@ -143,6 +149,18 @@ function App(): ReactElement {
     () => setIsCommandPaletteOpen(false),
     [],
   )
+  const handleOpenRecentProject = useCallback(
+    async (path: string) => {
+      try {
+        const bootstrap = await addProjectCommand(path)
+        applyBootstrap(bootstrap)
+        void refreshRecentProjects()
+      } catch {
+        // silent — project path may no longer exist
+      }
+    },
+    [applyBootstrap, refreshRecentProjects],
+  )
   const handleRemoveProject = useCallback(
     (projectId: string) => void removeProject(projectId),
     [removeProject],
@@ -166,10 +184,11 @@ function App(): ReactElement {
 
   // Boot & hydration effects
   useEffect(() => {
+    hydrateKeybindings()
     hydrateThemePreference()
     hydrateTerminalTypography()
     hydrateKnowledge()
-  }, [hydrateKnowledge, hydrateTerminalTypography, hydrateThemePreference])
+  }, [hydrateKeybindings, hydrateKnowledge, hydrateTerminalTypography, hydrateThemePreference])
 
   useEffect(() => {
     applyThemeToDocument(activeTheme)
@@ -190,47 +209,106 @@ function App(): ReactElement {
     }
   }, [])
 
-  // Global keyboard shortcuts
+  // Global keyboard shortcuts — reads keybindings from store on every keypress
+  // Determines active scope from sidebar view, then checks scoped matching
   useEffect(() => {
-    function handleGlobalCommandShortcut(event: KeyboardEvent): void {
-      const usesCommandPaletteShortcut =
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === 'p'
-
-      if (!usesCommandPaletteShortcut) {
-        return
+    function resolveActiveScope(): KeybindingScope {
+      switch (workspaceSidebarView) {
+        case 'git': return 'git'
+        case 'tree': return 'tree'
+        default: return 'global'
       }
-
-      event.preventDefault()
-      setIsCommandPaletteOpen(true)
     }
 
-    function handleProjectSwitchShortcut(event: KeyboardEvent): void {
-      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+    function handleGlobalShortcut(event: KeyboardEvent): void {
+      const state = useWorkspaceStore.getState()
+      const bindings = state.keybindings
+      const projectId = state.activeProjectId
+      const scope = resolveActiveScope()
+
+      // Helper: check if action matches in current scope
+      const matches = (action: Parameters<typeof matchesActionInScope>[2]) =>
+        matchesActionInScope(event, bindings, action, scope)
+
+      // --- Navigation ---
+      if (matches('commandPalette')) {
+        event.preventDefault()
+        setIsCommandPaletteOpen(true)
         return
       }
-
-      if (event.key === 'ArrowLeft') {
+      if (matches('newProject')) {
+        event.preventDefault()
+        openProjectDialog()
+        return
+      }
+      if (matches('closeProject')) {
+        if (!projectId) return
+        event.preventDefault()
+        void removeProject(projectId)
+        return
+      }
+      if (matches('nextProject')) {
+        event.preventDefault()
+        void cycleProjectSelection('next')
+        return
+      }
+      if (matches('previousProject')) {
         event.preventDefault()
         void cycleProjectSelection('previous')
         return
       }
 
-      if (event.key === 'ArrowRight') {
+      // --- Terminal ---
+      if (matches('newTerminal')) {
+        if (!projectId) return
         event.preventDefault()
-        void cycleProjectSelection('next')
+        void addTerminalPane(projectId)
+        return
+      }
+      if (matches('closeTerminal')) {
+        if (!projectId) return
+        const terminalState = state.terminalProjectStateByProject[projectId]
+        if (!terminalState || terminalState.paneOrder.length <= 1) return
+        const activePaneId = state.workspaceStateByProject[projectId]?.activePaneId
+        if (!activePaneId) return
+        event.preventDefault()
+        void removeTerminalPane(projectId, activePaneId)
+        return
+      }
+      if (matches('nextTerminal')) {
+        if (!projectId) return
+        const ts = state.terminalProjectStateByProject[projectId]
+        if (!ts || ts.paneOrder.length < 2) return
+        const activePaneId = state.workspaceStateByProject[projectId]?.activePaneId
+        const idx = activePaneId ? ts.paneOrder.indexOf(activePaneId) : 0
+        event.preventDefault()
+        state.selectTerminalPane(projectId, ts.paneOrder[(idx + 1) % ts.paneOrder.length])
+        return
+      }
+      if (matches('previousTerminal')) {
+        if (!projectId) return
+        const ts = state.terminalProjectStateByProject[projectId]
+        if (!ts || ts.paneOrder.length < 2) return
+        const activePaneId = state.workspaceStateByProject[projectId]?.activePaneId
+        const idx = activePaneId ? ts.paneOrder.indexOf(activePaneId) : 0
+        event.preventDefault()
+        state.selectTerminalPane(projectId, ts.paneOrder[(idx - 1 + ts.paneOrder.length) % ts.paneOrder.length])
+        return
+      }
+
+      // --- Git actions are dispatched via custom events so the git panel can handle them ---
+      if (matches('gitAiCommit') || matches('gitPullAll') || matches('gitPush') || matches('gitStash') || matches('gitStashPop')) {
+        event.preventDefault()
+        const gitAction = (['gitAiCommit', 'gitPullAll', 'gitPush', 'gitStash', 'gitStashPop'] as const).find((a) => matches(a))
+        if (gitAction) {
+          window.dispatchEvent(new CustomEvent('flowterm:git-shortcut', { detail: gitAction }))
+        }
       }
     }
 
-    window.addEventListener('keydown', handleGlobalCommandShortcut)
-    window.addEventListener('keydown', handleProjectSwitchShortcut)
-
-    return () => {
-      window.removeEventListener('keydown', handleGlobalCommandShortcut)
-      window.removeEventListener('keydown', handleProjectSwitchShortcut)
-    }
-  }, [cycleProjectSelection])
+    window.addEventListener('keydown', handleGlobalShortcut)
+    return () => { window.removeEventListener('keydown', handleGlobalShortcut) }
+  }, [addTerminalPane, cycleProjectSelection, openProjectDialog, removeProject, removeTerminalPane, workspaceSidebarView])
 
   // Tauri event bindings + bootstrap
   useEffect(() => {
@@ -334,6 +412,7 @@ function App(): ReactElement {
         <WorkspaceTabBar
           activeProjectId={activeProjectId}
           onAddProject={openProjectDialog}
+          onOpenRecentProject={handleOpenRecentProject}
           onRemoveProject={handleRemoveProject}
           onReorderProjects={reorderProjects}
           onSelectProject={handleSelectProject}
@@ -342,40 +421,30 @@ function App(): ReactElement {
         />
         {snapshot ? (
           workspaceSidebarView === 'settings' ? (
-            <PanelGroup
-              autoSaveId="flowterm-settings-layout"
-              className="flex-1"
-              direction="horizontal"
-            >
-              <Panel defaultSize={15} minSize={12}>
-                <WorkspaceSidebar
-                  cardCount={projectCardCount}
-                  files={snapshot.files}
-                  onSelectView={setWorkspaceSidebarView}
-                  selectedView={workspaceSidebarView}
-                >
-                  <WorkspaceTreePane
-                    activeProjectId={activeProjectId}
-                    files={snapshot.files}
-                  />
-                </WorkspaceSidebar>
-              </Panel>
-              <ResizeHandle />
-              <Panel defaultSize={85} minSize={40}>
+            <div className="flex flex-1 min-h-0">
+              <WorkspaceSidebar
+                cardCount={projectCardCount}
+                files={snapshot.files}
+                onSelectView={setWorkspaceSidebarView}
+                selectedView={workspaceSidebarView}
+              />
+              <div className="flex-1 min-w-0">
                 <WorkspaceSettings
                   activeProjectId={activeProjectId}
                   activeThemeId={activeTheme.id}
                   files={snapshot.files}
+                  keybindings={keybindings}
                   onOpenProject={openProjectDialog}
                   onSelectSection={setWorkspaceSettingsSection}
                   onSelectTheme={selectTheme}
+                  onSetKeybinding={setKeybinding}
                   onUpdateTerminalTypography={setTerminalTypography}
                   projects={projects}
                   selectedSection={workspaceSettingsSection}
                   terminalTypography={terminalTypography}
                 />
-              </Panel>
-            </PanelGroup>
+              </div>
+            </div>
           ) : workspaceSidebarView === 'board' ? (
             <PanelGroup
               autoSaveId="flowterm-board-layout"
@@ -402,6 +471,20 @@ function App(): ReactElement {
                 </Suspense>
               </Panel>
             </PanelGroup>
+          ) : workspaceSidebarView === 'git' ? (
+            <div className="flex flex-1 min-h-0">
+              <WorkspaceSidebar
+                cardCount={projectCardCount}
+                files={snapshot.files}
+                onSelectView={setWorkspaceSidebarView}
+                selectedView={workspaceSidebarView}
+              />
+              <div className="flex-1 min-w-0">
+                <Suspense fallback={<PanelFallback message="正在加载 Git 操作..." />}>
+                  <WorkspaceGitPanel activeProjectId={activeProjectId} />
+                </Suspense>
+              </div>
+            </div>
           ) : (
             <PanelGroup autoSaveId="flowterm-layout" className="flex-1" direction="horizontal">
               <Panel defaultSize={15} minSize={12}>
@@ -520,20 +603,15 @@ function TerminalPanelSlot({
   const removeTerminalPane = useWorkspaceStore((s) => s.removeTerminalPane)
   const resizeTerminal = useWorkspaceStore((s) => s.resizeTerminal)
   const selectTerminalPane = useWorkspaceStore((s) => s.selectTerminalPane)
-  const toggleSplitView = useWorkspaceStore((s) => s.toggleSplitView)
-  const updateTerminalPaneSizes = useWorkspaceStore((s) => s.updateTerminalPaneSizes)
+  const setRailWidth = useWorkspaceStore((s) => s.setRailWidth)
   const writeTerminal = useWorkspaceStore((s) => s.writeTerminal)
-  const terminalPaneSizes = useWorkspaceStore(
-    (s) =>
-      s.workspaceStateByProject[activeProjectId]?.terminalPaneSizes ?? EMPTY_PANE_SIZES,
-  )
   const activeTerminalPaneId = useWorkspaceStore(
     (s) =>
       s.workspaceStateByProject[activeProjectId]?.activePaneId ?? null,
   )
-  const isTerminalSplitView = useWorkspaceStore(
+  const sideRailWidth = useWorkspaceStore(
     (s) =>
-      s.workspaceStateByProject[activeProjectId]?.isSplitView ?? true,
+      s.workspaceStateByProject[activeProjectId]?.railWidth ?? 120,
   )
 
   const terminalPanes = useMemo(
@@ -545,10 +623,6 @@ function TerminalPanelSlot({
     () => { void addTerminalPane(activeProjectId) },
     [activeProjectId, addTerminalPane],
   )
-  const handleTerminalLayout = useCallback(
-    (sizes: number[]) => { updateTerminalPaneSizes(activeProjectId, sizes) },
-    [activeProjectId, updateTerminalPaneSizes],
-  )
   const handleRemovePane = useCallback(
     (paneId: string) => { void removeTerminalPane(activeProjectId, paneId) },
     [activeProjectId, removeTerminalPane],
@@ -557,23 +631,21 @@ function TerminalPanelSlot({
     (paneId: string) => { selectTerminalPane(activeProjectId, paneId) },
     [activeProjectId, selectTerminalPane],
   )
-  const handleToggleSplitView = useCallback(
-    () => { toggleSplitView(activeProjectId) },
-    [activeProjectId, toggleSplitView],
+  const handleSetRailWidth = useCallback(
+    (width: number) => { setRailWidth(activeProjectId, width) },
+    [activeProjectId, setRailWidth],
   )
 
   return (
     <Suspense fallback={<PanelFallback message="正在连接终端..." />}>
       <WorkspaceTerminal
         activePaneId={activeTerminalPaneId}
-        isSplitView={isTerminalSplitView}
         onAddPane={handleAddPane}
-        onLayout={handleTerminalLayout}
         onRemovePane={handleRemovePane}
         onSelectPane={handleSelectPane}
-        onToggleSplitView={handleToggleSplitView}
-        paneSizes={terminalPaneSizes}
+        onSetRailWidth={handleSetRailWidth}
         panes={terminalPanes}
+        railWidth={sideRailWidth}
         resizeTerminal={resizeTerminal}
         theme={theme}
         typography={typography}
@@ -646,7 +718,9 @@ function WorkspaceTreePane({
 
 function ResizeHandle(): ReactElement {
   return (
-    <PanelResizeHandle className="w-1 shrink-0 bg-[var(--bg-base)] transition-colors duration-150 hover:bg-[var(--interactive-hover)] data-[resize-handle-active]:bg-[var(--accent-amber)]" />
+    <PanelResizeHandle className="resize-handle group">
+      <GripVertical className="resize-handle__icon" />
+    </PanelResizeHandle>
   )
 }
 
@@ -689,15 +763,3 @@ function EmptyState({
 }
 
 export default App
-
-function isEditableElement(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  }
-
-  if (target.isContentEditable) {
-    return true
-  }
-
-  return ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)
-}

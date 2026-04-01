@@ -977,7 +977,7 @@ function CreateCardDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-[var(--overlay-bg)]"
         onClick={onClose}
       />
       <div className="relative w-[440px] rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-6 shadow-[var(--surface-shadow)]">

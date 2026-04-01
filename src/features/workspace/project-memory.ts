@@ -3,7 +3,7 @@ import type { ProjectWorkspaceState } from '../../lib/contracts'
 export function createProjectWorkspaceState(): ProjectWorkspaceState {
   return {
     activePaneId: null,
-    isSplitView: true,
+    isSplitView: false,
     railWidth: 44,
     selectedFilePath: null,
     terminalPaneSizes: [],

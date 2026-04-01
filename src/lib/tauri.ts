@@ -5,12 +5,17 @@ import type {
   AppBootstrap,
   AgentStatusEvent,
   FilePreview,
+  GitCommitResult,
+  GitPullResult,
+  GitRepository,
+  LlmConfig,
   PerformanceProbeReport,
   PerformanceProbeState,
   ProjectEntryKind,
   ProjectWorkspaceState,
   ProjectRefreshEvent,
   ProjectSnapshot,
+  RecentProject,
   TerminalAttachment,
   TerminalOutputEvent,
   TerminalStateEvent,
@@ -40,6 +45,10 @@ export async function addProject(
 
 export async function removeProject(projectId: string): Promise<AppBootstrap> {
   return invoke<AppBootstrap>('remove_project', { projectId })
+}
+
+export async function listRecentProjects(): Promise<RecentProject[]> {
+  return invoke<RecentProject[]>('list_recent_projects')
 }
 
 export async function activateProject(
@@ -168,6 +177,91 @@ export async function completePerformanceProbe(
 ): Promise<void> {
   return invoke('complete_performance_probe', { exitCode, report })
 }
+
+// ---------------------------------------------------------------------------
+// LLM Configuration
+// ---------------------------------------------------------------------------
+
+export async function readLlmConfig(): Promise<LlmConfig> {
+  return invoke<LlmConfig>('read_llm_config')
+}
+
+export async function saveLlmConfig(config: LlmConfig): Promise<void> {
+  return invoke('save_llm_config', { config })
+}
+
+// ---------------------------------------------------------------------------
+// Git Operations
+// ---------------------------------------------------------------------------
+
+export async function scanGitRepos(
+  projectId: string,
+): Promise<GitRepository[]> {
+  return invoke<GitRepository[]>('scan_git_repos', { projectId })
+}
+
+export async function gitPullAllRepos(
+  projectId: string,
+): Promise<GitPullResult[]> {
+  return invoke<GitPullResult[]>('git_pull_all_repos', { projectId })
+}
+
+export async function gitAutoCommitRepo(
+  projectId: string,
+  repoPath: string,
+  message: string,
+): Promise<GitCommitResult> {
+  return invoke<GitCommitResult>('git_auto_commit_repo', {
+    message,
+    projectId,
+    repoPath,
+  })
+}
+
+export async function gitResolveConflictsRepo(
+  projectId: string,
+  repoPath: string,
+): Promise<string[]> {
+  return invoke<string[]>('git_resolve_conflicts_repo', {
+    projectId,
+    repoPath,
+  })
+}
+
+export async function gitAiCommitRepo(
+  projectId: string,
+  repoPath: string,
+): Promise<GitCommitResult> {
+  return invoke<GitCommitResult>('git_ai_commit_repo', {
+    projectId,
+    repoPath,
+  })
+}
+
+export async function gitPushRepo(
+  projectId: string,
+  repoPath: string,
+): Promise<string> {
+  return invoke<string>('git_push_repo', { projectId, repoPath })
+}
+
+export async function gitStashSaveRepo(
+  projectId: string,
+  repoPath: string,
+): Promise<string> {
+  return invoke<string>('git_stash_save_repo', { projectId, repoPath })
+}
+
+export async function gitStashPopRepo(
+  projectId: string,
+  repoPath: string,
+): Promise<string> {
+  return invoke<string>('git_stash_pop_repo', { projectId, repoPath })
+}
+
+// ---------------------------------------------------------------------------
+// Event Listeners
+// ---------------------------------------------------------------------------
 
 export async function listenProjectRefresh(
   handler: (event: ProjectRefreshEvent) => void,

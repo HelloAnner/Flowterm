@@ -131,6 +131,35 @@ function ImagePreview({
     startOffsetX: number
     startOffsetY: number
   } | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  // Native wheel listener with { passive: false } to safely call preventDefault
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    function handleWheel(event: WheelEvent): void {
+      if (!preview.imageDataUrl) return
+
+      event.preventDefault()
+
+      const nextScale =
+        event.deltaY < 0
+          ? viewport.scale * 1.12
+          : viewport.scale / 1.12
+
+      setViewport((current) =>
+        zoomImageViewport(current, {
+          nextScale,
+          originX: event.clientX,
+          originY: event.clientY,
+        }),
+      )
+    }
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => { container.removeEventListener('wheel', handleWheel) }
+  }, [preview.imageDataUrl, viewport.scale])
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -153,24 +182,7 @@ function ImagePreview({
         onMouseUp={() => {
           dragStartRef.current = null
         }}
-        onWheel={(event) => {
-          if (!preview.imageDataUrl) {
-            return
-          }
-
-          event.preventDefault()
-
-          const nextScale =
-            event.deltaY < 0 ? viewport.scale * 1.12 : viewport.scale / 1.12
-
-          setViewport((current) =>
-            zoomImageViewport(current, {
-              nextScale,
-              originX: event.clientX,
-              originY: event.clientY,
-            }),
-          )
-        }}
+        ref={containerRef}
       >
         {preview.imageDataUrl && !hasDecodeError ? (
           <img

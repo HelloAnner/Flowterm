@@ -10,9 +10,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use git::scan_project;
 use models::{
-    AppBootstrap, FilePreview, PerformanceProbeReport, PerformanceProbeState,
-    PersistedTerminalPane, ProjectSnapshot, ProjectSummary, ProjectWorkspaceState,
-    TerminalAttachment,
+    AppBootstrap, FilePreview, GitCommitResult, GitPullResult, GitRepository, LlmConfig,
+    PerformanceProbeReport, PerformanceProbeState, PersistedTerminalPane, ProjectSnapshot,
+    ProjectSummary, ProjectWorkspaceState, RecentProject, TerminalAttachment,
 };
 use state::FlowtermState;
 use tauri::{AppHandle, Manager, State};
@@ -64,6 +64,14 @@ fn remove_project(
         }
 
         build_bootstrap(&app, &state)
+    })
+}
+
+#[tauri::command]
+fn list_recent_projects(state: State<FlowtermState>) -> Result<Vec<RecentProject>, String> {
+    with_error_handling(|| {
+        let registry = state.registry.lock().unwrap();
+        registry.list_recent_projects()
     })
 }
 
@@ -313,6 +321,181 @@ fn close_terminal(
     })
 }
 
+// ---------------------------------------------------------------------------
+// LLM Configuration
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn read_llm_config(state: State<FlowtermState>) -> Result<LlmConfig, String> {
+    with_error_handling(|| {
+        let registry = state.registry.lock().unwrap();
+        registry.load_llm_config()
+    })
+}
+
+#[tauri::command]
+fn save_llm_config(
+    state: State<FlowtermState>,
+    config: LlmConfig,
+) -> Result<(), String> {
+    with_error_handling(|| {
+        let mut registry = state.registry.lock().unwrap();
+        registry.save_llm_config(&config)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Git Operations
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn scan_git_repos(
+    state: State<FlowtermState>,
+    project_id: String,
+) -> Result<Vec<GitRepository>, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::scan_git_repositories(&PathBuf::from(project.path))
+    })
+}
+
+#[tauri::command]
+fn git_pull_all_repos(
+    state: State<FlowtermState>,
+    project_id: String,
+) -> Result<Vec<GitPullResult>, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::git_pull_all(&PathBuf::from(project.path))
+    })
+}
+
+#[tauri::command]
+fn git_auto_commit_repo(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_path: String,
+    message: String,
+) -> Result<GitCommitResult, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::git_auto_commit(&PathBuf::from(project.path), &repo_path, &message)
+    })
+}
+
+#[tauri::command]
+fn git_ai_commit_repo(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_path: String,
+) -> Result<GitCommitResult, String> {
+    with_error_handling(|| {
+        let llm_config = {
+            let registry = state.registry.lock().unwrap();
+            let _ = registry
+                .find_project(&project_id)
+                .context("project not found")?;
+            registry.load_llm_config()?
+        };
+
+        if llm_config.api_key.is_empty() {
+            anyhow::bail!("请先在设置中配置 LLM API Key");
+        }
+
+        git::git_ai_commit(&PathBuf::from(&repo_path), &llm_config)
+    })
+}
+
+#[tauri::command]
+fn git_push_repo(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_path: String,
+) -> Result<String, String> {
+    with_error_handling(|| {
+        let _ = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::git_push(&PathBuf::from(&repo_path))
+    })
+}
+
+#[tauri::command]
+fn git_stash_save_repo(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_path: String,
+) -> Result<String, String> {
+    with_error_handling(|| {
+        let _ = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::git_stash_save(&PathBuf::from(&repo_path))
+    })
+}
+
+#[tauri::command]
+fn git_stash_pop_repo(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_path: String,
+) -> Result<String, String> {
+    with_error_handling(|| {
+        let _ = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::git_stash_pop(&PathBuf::from(&repo_path))
+    })
+}
+
+#[tauri::command]
+fn git_resolve_conflicts_repo(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_path: String,
+) -> Result<Vec<String>, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::git_resolve_conflicts(&PathBuf::from(project.path), &repo_path)
+    })
+}
+
 #[tauri::command]
 fn read_performance_probe_state(
     state: State<FlowtermState>,
@@ -374,14 +557,25 @@ pub fn run() {
             close_terminal,
             complete_performance_probe,
             create_project_entry,
+            git_ai_commit_repo,
+            git_auto_commit_repo,
+            git_pull_all_repos,
+            git_push_repo,
+            git_resolve_conflicts_repo,
+            git_stash_pop_repo,
+            git_stash_save_repo,
+            list_recent_projects,
             list_terminals,
             read_file_preview,
+            read_llm_config,
             read_performance_probe_state,
             read_project_workspace,
             refresh_project_snapshot,
             remove_project,
             resize_terminal,
+            save_llm_config,
             save_project_workspace,
+            scan_git_repos,
             write_project_file,
             write_terminal,
         ])

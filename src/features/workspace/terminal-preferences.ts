@@ -5,9 +5,9 @@ export interface TerminalTypography {
 }
 
 export const DEFAULT_TERMINAL_TYPOGRAPHY: TerminalTypography = {
-  fontSize: 12,
-  letterSpacing: -0.6,
-  lineHeight: 1.22,
+  fontSize: 13,
+  letterSpacing: -0.3,
+  lineHeight: 1.25,
 }
 
 export const TERMINAL_TYPOGRAPHY_STORAGE_KEY = 'flowterm.terminal-typography'

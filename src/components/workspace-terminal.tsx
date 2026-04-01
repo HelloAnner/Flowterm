@@ -9,9 +9,6 @@ import {
   useMemo,
   useRef,
 } from 'react'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { Plus, X } from 'lucide-react'
-
 import type { TerminalTypography } from '../features/workspace/terminal-preferences'
 import {
   acquireTerminal,
@@ -19,9 +16,8 @@ import {
   updatePoolTheme,
   updatePoolTypography,
 } from '../features/workspace/terminal-pool'
-import { cn } from '../lib/utils'
 import type { AgentStatusSnapshot, TerminalState } from '../lib/contracts'
-import { TerminalSessionRail, type TerminalSession } from './terminal-session-rail'
+import { TerminalSideRail, type TerminalSideSession } from './terminal-side-rail'
 
 export interface TerminalPaneDescriptor {
   agentStatus: AgentStatusSnapshot
@@ -36,14 +32,12 @@ export interface TerminalPaneDescriptor {
 
 interface WorkspaceTerminalProps {
   activePaneId: string | null
-  isSplitView: boolean
   onAddPane: () => void
-  onLayout: (sizes: number[]) => void
   onRemovePane: (paneId: string) => void
   onSelectPane: (paneId: string) => void
-  onToggleSplitView: () => void
-  paneSizes: number[]
+  onSetRailWidth: (width: number) => void
   panes: TerminalPaneDescriptor[]
+  railWidth: number
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
   theme: {
     background: string
@@ -56,26 +50,23 @@ interface WorkspaceTerminalProps {
 
 export const WorkspaceTerminal = memo(function WorkspaceTerminal({
   activePaneId,
-  isSplitView,
   onAddPane,
-  onLayout,
   onRemovePane,
   onSelectPane,
-  onToggleSplitView,
-  paneSizes,
+  onSetRailWidth,
   panes,
+  railWidth,
   resizeTerminal,
   theme,
   typography,
   writeTerminal,
 }: WorkspaceTerminalProps): ReactElement {
-  const canAddPane = panes.length < 3
-  const hasMultiplePanes = panes.length > 1
-  const showAllPanes = isSplitView || !hasMultiplePanes || !activePaneId
-  const visiblePanes = showAllPanes ? panes : panes.filter((pane) => pane.id === activePaneId)
-  const visiblePaneSizes = showAllPanes ? paneSizes : [100]
+  const activePane = useMemo(
+    () => panes.find((p) => p.id === activePaneId) ?? panes[0] ?? null,
+    [panes, activePaneId],
+  )
 
-  const sessions = useMemo<TerminalSession[]>(
+  const sideSessions = useMemo<TerminalSideSession[]>(
     () =>
       panes.map((pane, index) => ({
         id: pane.id,
@@ -86,6 +77,7 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal({
     [panes],
   )
 
+  // Auto-select first pane when active is missing
   useEffect(() => {
     if (panes.length > 0 && !activePaneId) {
       onSelectPane(panes[0].id)
@@ -95,48 +87,13 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal({
   }, [panes, activePaneId, onSelectPane])
 
   return (
-    <div className="terminal-surface flex h-full min-h-0 flex-col m-2.5">
-      {/* Terminal panes — no outer toolbar chrome */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {visiblePanes.length > 1 ? (
-          <PanelGroup
-            className="h-full w-full"
-            direction="vertical"
-            key={`${visiblePanes[0]?.projectId ?? 'terminal'}-${visiblePanes.map((pane) => pane.id).join(':')}`}
-            onLayout={onLayout}
-          >
-            {visiblePanes.flatMap((pane, index) =>
-              [
-                index > 0 ? (
-                  <PanelResizeHandle
-                    className="group h-[3px] shrink-0 cursor-row-resize bg-[var(--terminal-divider-strong)] transition-colors hover:bg-[var(--border-subtle)] data-[resize-handle-active]:bg-[var(--accent-amber)]"
-                    key={`handle-${pane.id}`}
-                  />
-                ) : null,
-                <Panel
-                  className="overflow-hidden"
-                  defaultSize={visiblePaneSizes[index] ?? 100 / visiblePanes.length}
-                  key={pane.id}
-                  minSize={15}
-                >
-                  <TerminalPane
-                    onAddPane={null}
-                    onRemove={visiblePanes.length > 1 ? () => onRemovePane(pane.id) : null}
-                    pane={pane}
-                    resizeTerminal={resizeTerminal}
-                    theme={theme}
-                    typography={typography}
-                    writeTerminal={writeTerminal}
-                  />
-                </Panel>,
-              ].filter(Boolean),
-            )}
-          </PanelGroup>
-        ) : visiblePanes.length === 1 ? (
+    <div className="terminal-surface flex h-full min-h-0 flex-row m-2.5">
+      {/* Terminal viewport — always full area */}
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        {activePane ? (
           <TerminalPane
-            onAddPane={canAddPane ? onAddPane : null}
-            onRemove={panes.length > 1 ? () => onRemovePane(visiblePanes[0].id) : null}
-            pane={visiblePanes[0]}
+            key={activePane.id}
+            pane={activePane}
             resizeTerminal={resizeTerminal}
             theme={theme}
             typography={typography}
@@ -145,26 +102,23 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal({
         ) : null}
       </div>
 
-      {/* Bottom session strip — appears only when multiple panes exist */}
-      {hasMultiplePanes && (
-        <TerminalSessionRail
-          activeSessionId={activePaneId ?? panes[0]?.id}
-          canAdd={canAddPane}
-          isSplitView={isSplitView}
+      {/* Right sidebar */}
+      {panes.length > 0 ? (
+        <TerminalSideRail
+          activeSessionId={activePane?.id ?? null}
           onAddSession={onAddPane}
           onRemoveSession={onRemovePane}
           onSelectSession={onSelectPane}
-          onToggleSplitView={onToggleSplitView}
-          sessions={sessions}
+          onSetWidth={onSetRailWidth}
+          sessions={sideSessions}
+          width={railWidth}
         />
-      )}
+      ) : null}
     </div>
   )
 })
 
 interface TerminalPaneProps {
-  onAddPane: (() => void) | null
-  onRemove: (() => void) | null
   pane: TerminalPaneDescriptor
   resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>
   theme: {
@@ -177,8 +131,6 @@ interface TerminalPaneProps {
 }
 
 const TerminalPane = memo(function TerminalPane({
-  onAddPane,
-  onRemove,
   pane,
   resizeTerminal,
   theme,
@@ -194,7 +146,6 @@ const TerminalPane = memo(function TerminalPane({
     (sessionId: string, data: string) => writeTerminal(sessionId, data),
   )
 
-  // Acquire pooled terminal and mount its container into our viewport
   useEffect(() => {
     const viewport = viewportRef.current
     if (!viewport) return
@@ -209,26 +160,22 @@ const TerminalPane = memo(function TerminalPane({
     )
     pooledRef.current = pooled
 
-    // Mount the pool-owned container into our DOM slot
+    // Mount + fit + focus — single rAF for layout, then immediate focus
     viewport.appendChild(pooled.container)
-
-    // ResizeObserver for auto-fitting when the viewport size changes
-    const observer = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        pooled.fitAddon.fit()
-        const dimensions = pooled.fitAddon.proposeDimensions()
-        if (dimensions) {
-          pooled.resizeScheduler({ cols: dimensions.cols, rows: dimensions.rows })
-        }
-      })
-    })
-    observer.observe(viewport)
-
-    // Initial fit + focus
     requestAnimationFrame(() => {
       pooled.fitAddon.fit()
       pooled.terminal.focus()
     })
+
+    // Ongoing resize
+    const observer = new ResizeObserver(() => {
+      pooled.fitAddon.fit()
+      const dimensions = pooled.fitAddon.proposeDimensions()
+      if (dimensions) {
+        pooled.resizeScheduler({ cols: dimensions.cols, rows: dimensions.rows })
+      }
+    })
+    observer.observe(viewport)
 
     return () => {
       observer.disconnect()
@@ -237,81 +184,19 @@ const TerminalPane = memo(function TerminalPane({
     }
   }, [pane.sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live theme update across pool
-  useEffect(() => {
-    updatePoolTheme(theme)
-  }, [theme])
-
-  // Live typography update across pool
-  useEffect(() => {
-    updatePoolTypography(typography)
-  }, [typography])
+  useEffect(() => { updatePoolTheme(theme) }, [theme])
+  useEffect(() => { updatePoolTypography(typography) }, [typography])
 
   const handleViewportClick = useCallback(() => {
     pooledRef.current?.terminal.focus()
   }, [])
 
   return (
-    <div className="terminal-pane-shell flex h-full min-h-0 flex-col overflow-hidden">
-      {/* Ambient header */}
-      <div className="terminal-pane-header flex h-8 shrink-0 items-center justify-between px-3">
-        <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className={cn(
-              'h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-300',
-              pane.state === 'attention' && 'bg-[var(--accent-amber)]',
-              pane.state === 'running' && 'animate-pulse bg-[var(--accent-sage)]',
-              pane.state === 'exited' && 'bg-[var(--accent-clay)]',
-              pane.state === 'idle' && 'bg-[var(--text-muted)] opacity-30',
-            )}
-            data-testid="agent-status-light"
-          />
-          {pane.cwd ? (
-            <span className="max-w-40 truncate text-[10px] tracking-wide text-[var(--text-muted)]">
-              {resolveCwdLabel(pane.cwd)}
-            </span>
-          ) : null}
-        </div>
-
-        <div className="flex items-center gap-1">
-          <span className="mr-0.5 text-[9px] uppercase tracking-widest text-[var(--text-muted)] opacity-30">
-            {pane.shellLabel}
-          </span>
-          {onAddPane ? (
-            <div className="terminal-glass-panel flex items-center px-0.5">
-              <button
-                aria-label="新建终端"
-                className="flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
-                onClick={onAddPane}
-                title="新建终端"
-                type="button"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ) : null}
-          {onRemove ? (
-            <button
-              aria-label="关闭终端"
-              className="flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
-              onClick={onRemove}
-              title="关闭终端"
-              type="button"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Terminal viewport — pool-managed container gets mounted here */}
-      <div
-        className="terminal-pane-viewport min-h-0 flex-1"
-        onClick={handleViewportClick}
-        ref={viewportRef}
-      />
-    </div>
+    <div
+      className="terminal-pane-viewport h-full min-h-0 w-full"
+      onClick={handleViewportClick}
+      ref={viewportRef}
+    />
   )
 })
 

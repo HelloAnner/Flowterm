@@ -189,6 +189,110 @@ pub struct PerformanceProbeState {
     pub scenario: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// LLM Configuration
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmConfig {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    pub commit_prompt: String,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: "https://api.deepseek.com".to_string(),
+            model: "deepseek-chat".to_string(),
+            commit_prompt: DEFAULT_COMMIT_PROMPT.to_string(),
+        }
+    }
+}
+
+pub const DEFAULT_COMMIT_PROMPT: &str = r#"You are an expert Git commit message writer. Given a git diff, output a single commit message strictly following the Conventional Commits specification.
+
+Requirements:
+- First line: <type>(optional scope): <subject>
+  - type must be one of: feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert
+  - No emojis anywhere (including the first line and bullet points)
+  - subject uses imperative mood, ≤ 72 characters, no trailing period
+- Blank line
+- Markdown bullet list (1–6 items) concisely summarizing key changes:
+  - Focus on "what/why", avoid listing file names or implementation details
+  - Each item should fit on one line
+- For mixed changes, pick the dominant type; when unclear, use chore
+- Output only the commit message itself — no code fences, no extra explanation, no quotes
+- Write entirely in English"#;
+
+// ---------------------------------------------------------------------------
+// Git Operations
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitRepoStatus {
+    Clean,
+    Changed,
+    Conflict,
+    Pulling,
+    Error,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChangedFile {
+    pub path: String,
+    pub status: char,
+    pub insertions: usize,
+    pub deletions: usize,
+    pub location: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConflictFile {
+    pub path: String,
+    pub ours_content: String,
+    pub theirs_content: String,
+    pub base_content: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepository {
+    pub name: String,
+    pub path: String,
+    pub branch: String,
+    pub status: GitRepoStatus,
+    pub changed_files: Vec<GitChangedFile>,
+    pub conflict_files: Vec<GitConflictFile>,
+    pub conflict_count: usize,
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitPullResult {
+    pub repo_name: String,
+    pub success: bool,
+    pub conflict_count: usize,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitResult {
+    pub repo_name: String,
+    pub success: bool,
+    pub commit_hash: String,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PerformanceProbeReport {
@@ -202,4 +306,12 @@ pub struct ProjectRecord {
     pub id: String,
     pub name: String,
     pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentProject {
+    pub path: String,
+    pub name: String,
+    pub last_opened_at: String,
 }

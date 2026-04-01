@@ -11,7 +11,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::models::{PersistedTerminalPane, ProjectRecord, ProjectWorkspaceState};
+use crate::models::{LlmConfig, PersistedTerminalPane, ProjectRecord, ProjectWorkspaceState, RecentProject};
 
 const DATABASE_FILE_NAME: &str = "flowterm.sqlite3";
 const E2E_HANDSHAKE_PATH_ENV: &str = "FLOWTERM_E2E_HANDSHAKE_PATH";
@@ -80,6 +80,7 @@ impl ProjectRegistry {
             .cloned()
         {
             self.active_project_id = Some(project.id);
+            self.touch_recent_project(&project.name, &project.path)?;
             self.persist_active_project()?;
             return Ok(());
         }
@@ -104,6 +105,7 @@ impl ProjectRegistry {
             params![project.id, project.name, project.path],
         )?;
 
+        self.touch_recent_project(&project.name, &project.path)?;
         self.active_project_id = Some(project.id.clone());
         self.projects.push(project);
         self.projects
@@ -167,6 +169,33 @@ impl ProjectRegistry {
         }
 
         self.persist_active_project()
+    }
+
+    pub fn touch_recent_project(&self, name: &str, path: &str) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO recent_projects (path, name, last_opened_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(path) DO UPDATE SET name = ?2, last_opened_at = datetime('now')",
+            params![path, name],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_recent_projects(&self) -> Result<Vec<RecentProject>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT path, name, last_opened_at FROM recent_projects ORDER BY last_opened_at DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(RecentProject {
+                path: row.get(0)?,
+                name: row.get(1)?,
+                last_opened_at: row.get(2)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to list recent projects")
     }
 
     #[cfg(test)]
@@ -363,6 +392,35 @@ impl ProjectRegistry {
 
         Ok(())
     }
+
+    pub fn load_llm_config(&self) -> Result<LlmConfig> {
+        let connection = self.connection()?;
+        let json: Option<String> = connection
+            .query_row(
+                "SELECT value FROM app_state WHERE key = 'llm_config'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match json {
+            Some(json) => Ok(serde_json::from_str(&json)?),
+            None => Ok(LlmConfig::default()),
+        }
+    }
+
+    pub fn save_llm_config(&mut self, config: &LlmConfig) -> Result<()> {
+        let connection = self.connection()?;
+        let json = serde_json::to_string(config)?;
+
+        connection.execute(
+            "INSERT INTO app_state (key, value) VALUES ('llm_config', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![json],
+        )?;
+
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -493,6 +551,11 @@ fn initialize_database(path: &PathBuf) -> Result<()> {
             sort_order INTEGER NOT NULL,
             cwd TEXT,
             PRIMARY KEY(project_id, pane_id)
+        );
+        CREATE TABLE IF NOT EXISTS recent_projects (
+            path TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
         );",
     )?;
     ensure_workspace_state_columns(&connection)?;

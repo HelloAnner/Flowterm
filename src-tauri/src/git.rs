@@ -826,6 +826,614 @@ fn should_visit(path: &Path) -> bool {
     !ignored.contains(&name)
 }
 
+// ---------------------------------------------------------------------------
+// Git Operations — multi-repo scanning, pull, commit
+// ---------------------------------------------------------------------------
+
+use crate::models::{
+    GitChangedFile, GitCommitResult, GitConflictFile, GitPullResult, GitRepoStatus, GitRepository,
+    LlmConfig,
+};
+
+pub fn scan_git_repositories(project_path: &Path) -> Result<Vec<GitRepository>> {
+    let discovery = discover_workspace_files(project_path)?;
+    let mut repos = Vec::new();
+
+    for repo_root in &discovery.git_repo_roots {
+        let name = repo_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let branch = read_current_branch(repo_root);
+        let statuses = collect_git_statuses_for_repo(project_path, repo_root).unwrap_or_default();
+        let diff_stats = collect_diff_stats(repo_root);
+        let (ahead, behind) = read_ahead_behind(repo_root);
+
+        let conflict_files = detect_conflicts(repo_root, project_path);
+        let conflict_count = conflict_files.len();
+
+        let changed_files: Vec<GitChangedFile> = statuses
+            .iter()
+            .filter(|(_, status)| **status != ' ')
+            .map(|(path, status)| {
+                let stats = diff_stats.get(path).cloned().unwrap_or((0, 0));
+                GitChangedFile {
+                    path: path.clone(),
+                    status: *status,
+                    insertions: stats.0,
+                    deletions: stats.1,
+                    location: path.clone(),
+                }
+            })
+            .collect();
+
+        let status = if conflict_count > 0 {
+            GitRepoStatus::Conflict
+        } else if changed_files.is_empty() {
+            GitRepoStatus::Clean
+        } else {
+            GitRepoStatus::Changed
+        };
+
+        repos.push(GitRepository {
+            name,
+            path: repo_root.to_string_lossy().to_string(),
+            branch,
+            status,
+            changed_files,
+            conflict_files,
+            conflict_count,
+            ahead,
+            behind,
+        });
+    }
+
+    Ok(repos)
+}
+
+pub fn git_pull_all(project_path: &Path) -> Result<Vec<GitPullResult>> {
+    let discovery = discover_workspace_files(project_path)?;
+    let mut results = Vec::new();
+
+    for repo_root in &discovery.git_repo_roots {
+        let name = repo_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let output = Command::new("git")
+            .args(["pull", "--no-rebase"])
+            .current_dir(repo_root)
+            .output();
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                let conflict_count = detect_conflicts(repo_root, project_path).len();
+
+                results.push(GitPullResult {
+                    repo_name: name,
+                    success: out.status.success() && conflict_count == 0,
+                    conflict_count,
+                    message: if out.status.success() {
+                        stdout
+                    } else {
+                        stderr
+                    },
+                });
+            }
+            Err(err) => {
+                results.push(GitPullResult {
+                    repo_name: name,
+                    success: false,
+                    conflict_count: 0,
+                    message: err.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+pub fn git_auto_commit(
+    _project_path: &Path,
+    repo_path: &str,
+    message: &str,
+) -> Result<GitCommitResult> {
+    let repo_root = PathBuf::from(repo_path);
+    let name = repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Stage all changes
+    let add_output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(&repo_root)
+        .output()
+        .context("failed to run git add")?;
+
+    if !add_output.status.success() {
+        return Ok(GitCommitResult {
+            repo_name: name,
+            success: false,
+            commit_hash: String::new(),
+            message: String::from_utf8_lossy(&add_output.stderr).to_string(),
+        });
+    }
+
+    // Commit
+    let commit_output = Command::new("git")
+        .args(["commit", "-m", message])
+        .current_dir(&repo_root)
+        .output()
+        .context("failed to run git commit")?;
+
+    let stdout = String::from_utf8_lossy(&commit_output.stdout).to_string();
+    let commit_hash = if commit_output.status.success() {
+        read_head_hash(&repo_root)
+    } else {
+        String::new()
+    };
+
+    Ok(GitCommitResult {
+        repo_name: name,
+        success: commit_output.status.success(),
+        commit_hash,
+        message: if commit_output.status.success() {
+            stdout
+        } else {
+            String::from_utf8_lossy(&commit_output.stderr).to_string()
+        },
+    })
+}
+
+pub fn git_resolve_conflicts(project_path: &Path, repo_path: &str) -> Result<Vec<String>> {
+    let repo_root = PathBuf::from(repo_path);
+    let conflicts = detect_conflicts(&repo_root, project_path);
+    let mut resolved = Vec::new();
+
+    for conflict in &conflicts {
+        // Accept theirs by default for auto-resolve
+        let _file_path = repo_root.join(&conflict.path);
+        let output = Command::new("git")
+            .args(["checkout", "--theirs", "--", &conflict.path])
+            .current_dir(&repo_root)
+            .output();
+
+        if let Ok(out) = output {
+            if out.status.success() {
+                // Stage the resolved file
+                let _ = Command::new("git")
+                    .args(["add", &conflict.path])
+                    .current_dir(&repo_root)
+                    .output();
+                resolved.push(conflict.path.clone());
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+pub fn git_ai_commit(repo_root: &Path, llm_config: &LlmConfig) -> Result<GitCommitResult> {
+    let name = repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Collect diff and name-status
+    let diff = Command::new("git")
+        .args(["diff", "--no-ext-diff", "--no-color"])
+        .current_dir(repo_root)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let staged_diff = Command::new("git")
+        .args(["diff", "--cached", "--no-ext-diff", "--no-color"])
+        .current_dir(repo_root)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let combined_diff = if staged_diff.is_empty() {
+        diff.clone()
+    } else if diff.is_empty() {
+        staged_diff.clone()
+    } else {
+        format!("{staged_diff}\n{diff}")
+    };
+
+    if combined_diff.trim().is_empty() {
+        // Check for untracked files
+        let status = Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .current_dir(repo_root)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        if status.trim().is_empty() {
+            return Ok(GitCommitResult {
+                repo_name: name,
+                success: false,
+                commit_hash: String::new(),
+                message: "没有需要提交的改动".to_string(),
+            });
+        }
+    }
+
+    let name_status = Command::new("git")
+        .args(["diff", "--name-status"])
+        .current_dir(repo_root)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    // Shrink diff if too large (200KB limit)
+    let max_diff_bytes = 200_000;
+    let shrunk_diff = if combined_diff.len() > max_diff_bytes {
+        combined_diff[..max_diff_bytes].to_string()
+    } else {
+        combined_diff
+    };
+
+    // Build prompt
+    let user_prompt = format!(
+        "Generate a commit message based on the following git diff:\n\n\
+         === git diff (staged) begin ===\n\
+         File summary:\n{name_status}\n\
+         Patch details:\n{shrunk_diff}\n\
+         === git diff end ===\n"
+    );
+
+    // Call LLM API
+    let commit_message = call_llm_api(llm_config, &user_prompt)?;
+    let sanitized = sanitize_commit_message(&commit_message);
+
+    if sanitized.is_empty() {
+        return Ok(GitCommitResult {
+            repo_name: name,
+            success: false,
+            commit_hash: String::new(),
+            message: "AI 返回了空的提交信息".to_string(),
+        });
+    }
+
+    // Stage all changes
+    let _ = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(repo_root)
+        .output();
+
+    // Commit
+    let commit_output = Command::new("git")
+        .args(["commit", "-m", &sanitized, "--no-verify"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to run git commit")?;
+
+    let commit_hash = if commit_output.status.success() {
+        read_head_hash(repo_root)
+    } else {
+        String::new()
+    };
+
+    Ok(GitCommitResult {
+        repo_name: name,
+        success: commit_output.status.success(),
+        commit_hash,
+        message: if commit_output.status.success() {
+            sanitized
+        } else {
+            String::from_utf8_lossy(&commit_output.stderr).to_string()
+        },
+    })
+}
+
+pub fn git_push(repo_root: &Path) -> Result<String> {
+    let has_upstream = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .current_dir(repo_root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let output = if has_upstream {
+        Command::new("git")
+            .args(["push"])
+            .current_dir(repo_root)
+            .output()
+            .context("failed to run git push")?
+    } else {
+        let branch = read_current_branch(repo_root);
+        Command::new("git")
+            .args(["push", "-u", "origin", &branch])
+            .current_dir(repo_root)
+            .output()
+            .context("failed to run git push")?
+    };
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        anyhow::bail!("git push failed: {stderr}");
+    }
+}
+
+pub fn git_stash_save(repo_root: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["stash", "push", "-m", "flowterm auto-stash"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to run git stash")?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub fn git_stash_pop(repo_root: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["stash", "pop"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to run git stash pop")?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        anyhow::bail!("git stash pop failed: {stderr}");
+    }
+}
+
+fn call_llm_api(config: &LlmConfig, user_prompt: &str) -> Result<String> {
+    let body = serde_json::json!({
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": config.commit_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 400
+    });
+
+    let paths = ["/chat/completions", "/v1/chat/completions"];
+    let mut last_error: Option<String> = None;
+
+    for path in &paths {
+        let url = format!("{}{}", config.base_url.trim_end_matches('/'), path);
+        let response = ureq::post(&url)
+            .set("Authorization", &format!("Bearer {}", config.api_key))
+            .set("Content-Type", "application/json")
+            .timeout(std::time::Duration::from_secs(60))
+            .send_json(&body);
+
+        match response {
+            Ok(resp) => {
+                let json: serde_json::Value = resp.into_json()?;
+                let content = json["choices"][0]["message"]["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if content.is_empty() {
+                    last_error = Some("API returned empty content".to_string());
+                    continue;
+                }
+                return Ok(content);
+            }
+            Err(e) => {
+                last_error = Some(e.to_string());
+                continue;
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "LLM API 调用失败: {}",
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    )
+}
+
+fn sanitize_commit_message(msg: &str) -> String {
+    let mut s = msg.trim().to_string();
+
+    // Strip code fences
+    if s.starts_with("```") {
+        let lines: Vec<&str> = s.lines().collect();
+        let start = if lines.first().map_or(false, |l| l.starts_with("```")) { 1 } else { 0 };
+        let end = if lines.last().map_or(false, |l| l.trim() == "```") {
+            lines.len() - 1
+        } else {
+            lines.len()
+        };
+        s = lines[start..end].join("\n").trim().to_string();
+    }
+
+    // Strip emojis (common ranges)
+    s = s
+        .chars()
+        .filter(|ch| {
+            let cp = *ch as u32;
+            !((0x1F300..=0x1FAFF).contains(&cp)
+                || (0x2600..=0x27BF).contains(&cp)
+                || (0xFE00..=0xFE0F).contains(&cp))
+        })
+        .collect();
+
+    // Ensure proper formatting: first line + blank line + body
+    if let Some((first, rest)) = s.split_once('\n') {
+        let first = first.trim();
+        let rest = rest.trim();
+        if rest.is_empty() {
+            s = first.to_string();
+        } else {
+            s = format!("{first}\n\n{rest}");
+        }
+    }
+
+    s
+}
+
+fn read_current_branch(repo_root: &Path) -> String {
+    Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "HEAD".to_string())
+}
+
+fn read_head_hash(repo_root: &Path) -> String {
+    Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn read_ahead_behind(repo_root: &Path) -> (usize, usize) {
+    let output = Command::new("git")
+        .args(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+        .current_dir(repo_root)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let parts: Vec<&str> = text.trim().split('\t').collect();
+            if parts.len() == 2 {
+                let ahead = parts[0].parse().unwrap_or(0);
+                let behind = parts[1].parse().unwrap_or(0);
+                (ahead, behind)
+            } else {
+                (0, 0)
+            }
+        }
+        _ => (0, 0),
+    }
+}
+
+fn collect_diff_stats(repo_root: &Path) -> HashMap<String, (usize, usize)> {
+    let output = Command::new("git")
+        .args(["diff", "--numstat"])
+        .current_dir(repo_root)
+        .output();
+
+    let mut stats = HashMap::new();
+    if let Ok(out) = output {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    let insertions = parts[0].parse().unwrap_or(0);
+                    let deletions = parts[1].parse().unwrap_or(0);
+                    stats.insert(parts[2].to_string(), (insertions, deletions));
+                }
+            }
+        }
+    }
+    stats
+}
+
+fn detect_conflicts(repo_root: &Path, _project_path: &Path) -> Vec<GitConflictFile> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(repo_root)
+        .output();
+
+    let mut conflicts = Vec::new();
+    if let Ok(out) = output {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let path = line.trim().to_string();
+                if path.is_empty() {
+                    continue;
+                }
+                let abs_path = repo_root.join(&path);
+                let content = fs::read_to_string(&abs_path).unwrap_or_default();
+
+                let (ours, theirs, base) = parse_conflict_markers(&content);
+                conflicts.push(GitConflictFile {
+                    path,
+                    ours_content: ours,
+                    theirs_content: theirs,
+                    base_content: base,
+                });
+            }
+        }
+    }
+    conflicts
+}
+
+fn parse_conflict_markers(content: &str) -> (String, String, String) {
+    let mut ours = String::new();
+    let mut theirs = String::new();
+    let mut base = String::new();
+    let mut section = "none";
+
+    for line in content.lines() {
+        if line.starts_with("<<<<<<<") {
+            section = "ours";
+            continue;
+        }
+        if line.starts_with("|||||||") {
+            section = "base";
+            continue;
+        }
+        if line.starts_with("=======") {
+            section = "theirs";
+            continue;
+        }
+        if line.starts_with(">>>>>>>") {
+            section = "none";
+            continue;
+        }
+        match section {
+            "ours" => {
+                ours.push_str(line);
+                ours.push('\n');
+            }
+            "theirs" => {
+                theirs.push_str(line);
+                theirs.push('\n');
+            }
+            "base" => {
+                base.push_str(line);
+                base.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    (ours, theirs, base)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{

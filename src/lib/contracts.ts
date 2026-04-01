@@ -81,6 +81,12 @@ export interface AppBootstrap {
   workspaceState: ProjectWorkspaceState | null
 }
 
+export interface RecentProject {
+  path: string
+  name: string
+  lastOpenedAt: string
+}
+
 export interface ProjectRefreshEvent {
   projectId: string
   paths: string[]
@@ -120,6 +126,64 @@ export interface PerformanceProbeReport {
   metadata: Record<string, string>
   metrics: Record<string, number>
   scenario: string
+}
+
+// ---------------------------------------------------------------------------
+// LLM Configuration
+// ---------------------------------------------------------------------------
+
+export interface LlmConfig {
+  apiKey: string
+  baseUrl: string
+  model: string
+  commitPrompt: string
+}
+
+// ---------------------------------------------------------------------------
+// Git Operations
+// ---------------------------------------------------------------------------
+
+export type GitRepoStatus = 'changed' | 'clean' | 'conflict' | 'error' | 'pulling'
+
+export interface GitChangedFile {
+  path: string
+  status: string
+  insertions: number
+  deletions: number
+  location: string
+}
+
+export interface GitConflictFile {
+  path: string
+  oursContent: string
+  theirsContent: string
+  baseContent: string
+}
+
+export interface GitRepository {
+  name: string
+  path: string
+  branch: string
+  status: GitRepoStatus
+  changedFiles: GitChangedFile[]
+  conflictFiles: GitConflictFile[]
+  conflictCount: number
+  ahead: number
+  behind: number
+}
+
+export interface GitPullResult {
+  repoName: string
+  success: boolean
+  conflictCount: number
+  message: string
+}
+
+export interface GitCommitResult {
+  repoName: string
+  success: boolean
+  commitHash: string
+  message: string
 }
 
 // ---------------------------------------------------------------------------
