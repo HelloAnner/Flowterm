@@ -1,4 +1,8 @@
 import {
+  memo,
+  useCallback,
+  type ClipboardEvent as ReactClipboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
   useDeferredValue,
   useEffect,
@@ -6,8 +10,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Activity, Copy, Eye } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Activity, Copy } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 
 import { ScrollArea } from './ui/scroll-area'
@@ -20,7 +23,6 @@ import {
   zoomImageViewport,
 } from '../features/workspace/preview-window'
 import {
-  resolveCodeFenceSyntax,
   resolvePreviewSyntax,
   resolveSyntaxTheme,
   shouldDelaySyntaxHighlight,
@@ -32,14 +34,16 @@ import type { FilePreview, GitStatusCode, LiveStatus } from '../lib/contracts'
 interface WorkspaceDiffPanelProps {
   isLoading: boolean
   onRequestWindow: (startLine: number, lineCount: number) => void
+  onSaveMarkdown?: (path: string, content: string) => Promise<void>
   preview: FilePreview | null
   selectedFilePath: string | null
   syntaxThemeId: string
 }
 
-export function WorkspaceDiffPanel({
+export const WorkspaceDiffPanel = memo(function WorkspaceDiffPanel({
   isLoading,
   onRequestWindow,
+  onSaveMarkdown,
   preview,
   selectedFilePath,
   syntaxThemeId,
@@ -56,10 +60,10 @@ export function WorkspaceDiffPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-base)]">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--border-subtle)] px-4">
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-[var(--border-subtle)] px-3">
         <div className="min-w-0">
           {deferredPreview?.path ? (
-            <p className="truncate font-mono text-[12px] text-[var(--text-muted)]">
+            <p className="truncate font-mono text-[12px] text-[var(--text-secondary)]">
               {deferredPreview.path}
             </p>
           ) : (
@@ -67,11 +71,6 @@ export function WorkspaceDiffPanel({
           )}
         </div>
         <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-elevated)] px-2 py-1">
-            <Eye className="h-3 w-3" />
-            工作区预览
-          </span>
-          {deferredPreview ? <SyntaxBadge preview={deferredPreview} syntax={syntax} /> : null}
           {deferredPreview ? (
             <StatusBadge
               gitStatus={deferredPreview.gitStatus}
@@ -84,9 +83,12 @@ export function WorkspaceDiffPanel({
       {deferredPreview ? (
         deferredPreview.mode === 'image' ? (
           <ImagePreview key={deferredPreview.path} preview={deferredPreview} />
-        ) : syntax?.isMarkdown &&
-          deferredPreview.totalLines === deferredPreview.lines.length ? (
-          <MarkdownPreview preview={deferredPreview} syntaxTheme={syntaxTheme} />
+        ) : syntax?.isMarkdown ? (
+          <MarkdownEditorPreview
+            key={deferredPreview.path}
+            onSaveMarkdown={onSaveMarkdown}
+            preview={deferredPreview}
+          />
         ) : (
           <VirtualizedPreview
             key={deferredPreview.path}
@@ -111,7 +113,7 @@ export function WorkspaceDiffPanel({
       )}
     </div>
   )
-}
+})
 
 const ROW_HEIGHT = 24
 const OVERSCAN_ROWS = 24
@@ -368,7 +370,25 @@ function VirtualizedPreview({
   }, [preview.lines, preview.startLine, renderRange.endIndex, renderRange.startIndex])
 
   return (
-    <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
+    <ScrollArea
+      className="min-h-0 flex-1 outline-none"
+      onKeyDown={(event) => {
+        if (!isSelectAllShortcut(event)) {
+          return
+        }
+
+        const viewport = viewportRef.current
+
+        if (!viewport) {
+          return
+        }
+
+        event.preventDefault()
+        selectTextContent(viewport)
+      }}
+      tabIndex={0}
+      viewportRef={viewportRef}
+    >
       <div
         className="relative font-mono text-[13px] leading-6"
         style={{ height: `${Math.max(preview.totalLines * ROW_HEIGHT, ROW_HEIGHT)}px` }}
@@ -426,6 +446,98 @@ function VirtualizedPreview({
   )
 }
 
+function MarkdownEditorPreview({
+  onSaveMarkdown,
+  preview,
+}: {
+  onSaveMarkdown?: (path: string, content: string) => Promise<void>
+  preview: FilePreview
+}): ReactElement {
+  const sourceText = useMemo(
+    () => preview.lines.map((line) => line.content).join('\n'),
+    [preview.lines],
+  )
+  const previousPathRef = useRef(preview.path)
+  const [draft, setDraft] = useState(sourceText)
+  const [syncedText, setSyncedText] = useState(sourceText)
+  const isDirty = draft !== syncedText
+  const saveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const savingRef = useRef(false)
+
+  const flush = useCallback(
+    async (path: string, content: string) => {
+      if (!onSaveMarkdown || savingRef.current) return
+      savingRef.current = true
+      try {
+        await onSaveMarkdown(path, content)
+        setSyncedText(content)
+      } finally {
+        savingRef.current = false
+      }
+    },
+    [onSaveMarkdown],
+  )
+
+  useEffect(() => {
+    const pathChanged = previousPathRef.current !== preview.path
+    previousPathRef.current = preview.path
+
+    if (pathChanged || !isDirty) {
+      setDraft(sourceText)
+      setSyncedText(sourceText)
+    }
+  }, [isDirty, preview.path, sourceText])
+
+  // Debounced auto-save: writes after 600ms of inactivity
+  useEffect(() => {
+    if (!isDirty || !onSaveMarkdown) return
+
+    saveRef.current = setTimeout(() => {
+      void flush(preview.path, draft)
+    }, 600)
+
+    return () => {
+      if (saveRef.current) clearTimeout(saveRef.current)
+    }
+  }, [draft, isDirty, onSaveMarkdown, preview.path, flush])
+
+  // Flush on unmount or path change so edits are never lost
+  useEffect(() => {
+    return () => {
+      if (saveRef.current) clearTimeout(saveRef.current)
+    }
+  }, [preview.path])
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-[var(--bg-base)]">
+      <div className="flex h-9 shrink-0 items-center border-b border-[var(--border-subtle)] px-3">
+        <span className="text-[11px] tracking-[0.08em] text-[var(--text-muted)]">
+          Markdown
+        </span>
+      </div>
+      <textarea
+        aria-label="Markdown 编辑器"
+        className="min-h-0 flex-1 resize-none bg-[var(--bg-base)] px-4 py-3 font-mono text-[13px] leading-6 text-[var(--text-primary)] outline-none"
+        onChange={(event) => {
+          setDraft(event.target.value)
+        }}
+        onCopy={(event) => {
+          handleMarkdownCopy(event)
+        }}
+        onKeyDown={(event) => {
+          if (isSelectAllShortcut(event)) {
+            event.preventDefault()
+            event.currentTarget.setSelectionRange(0, event.currentTarget.value.length)
+            return
+          }
+        }}
+        spellCheck={false}
+        value={draft}
+      />
+    </div>
+  )
+}
+
 function StatusBadge({
   gitStatus,
   liveStatus,
@@ -472,7 +584,7 @@ function StatusBadge({
   )
 }
 
-function LineNumberCell({
+const LineNumberCell = memo(function LineNumberCell({
   number,
   tone,
 }: {
@@ -490,73 +602,9 @@ function LineNumberCell({
       {number ?? ''}
     </div>
   )
-}
+})
 
-function MarkdownPreview({
-  preview,
-  syntaxTheme,
-}: {
-  preview: FilePreview
-  syntaxTheme: ReturnType<typeof resolveSyntaxTheme>
-}): ReactElement {
-  const content = preview.lines.map((l) => l.content).join('\n')
-
-  return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="md-prose md-prose--full-width px-8 py-6">
-        <ReactMarkdown
-          components={{
-            code({ children, className }) {
-              const languageMatch = /language-([A-Za-z0-9_+-]+)/.exec(className ?? '')
-
-              if (!languageMatch) {
-                return <code>{children}</code>
-              }
-
-              const syntax = resolveCodeFenceSyntax(languageMatch[1])
-
-              if (syntax.isPlainText) {
-                return <code>{children}</code>
-              }
-
-              return (
-                <SyntaxHighlighter
-                  customStyle={syntaxHighlighterStyle}
-                  language={syntax.language}
-                  PreTag="div"
-                  style={syntaxTheme}
-                  wrapLongLines
-                >
-                  {String(children).replace(/\n$/, '')}
-                </SyntaxHighlighter>
-              )
-            },
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-      </div>
-    </ScrollArea>
-  )
-}
-
-function SyntaxBadge({
-  preview,
-  syntax,
-}: {
-  preview: FilePreview
-  syntax: PreviewSyntax | null
-}): ReactElement {
-  const label = preview.mode === 'image' ? 'Image' : (syntax?.label ?? 'Plain Text')
-
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--info-badge-border)] bg-[var(--info-badge-bg)] px-2 py-1 text-[var(--accent-glow)]">
-      {label}
-    </span>
-  )
-}
-
-function CodeLine({
+const CodeLine = memo(function CodeLine({
   content,
   shouldHighlight,
   syntax,
@@ -583,13 +631,49 @@ function CodeLine({
       {content.length > 0 ? content : ' '}
     </SyntaxHighlighter>
   )
-}
+})
 
 const syntaxHighlighterStyle = {
   background: 'transparent',
   margin: 0,
   overflow: 'visible',
   padding: '0 1rem',
+}
+
+function handleMarkdownCopy(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
+  const { clipboardData, currentTarget } = event
+
+  if (currentTarget.selectionStart === currentTarget.selectionEnd) {
+    return
+  }
+
+  event.preventDefault()
+  clipboardData?.setData(
+    'text/plain',
+    currentTarget.value.slice(currentTarget.selectionStart, currentTarget.selectionEnd),
+  )
+}
+
+function isSelectAllShortcut(event: ReactKeyboardEvent<HTMLElement>): boolean {
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === 'a'
+  )
+}
+
+function selectTextContent(node: HTMLElement): void {
+  const selection = window.getSelection()
+
+  if (!selection) {
+    return
+  }
+
+  const range = document.createRange()
+  range.selectNodeContents(node)
+  selection.removeAllRanges()
+  selection.addRange(range)
 }
 
 function resolveStatusCopy(

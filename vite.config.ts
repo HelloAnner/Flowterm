@@ -8,7 +8,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-fit')) {
+          if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-fit') || id.includes('@xterm/addon-webgl')) {
             return 'terminal'
           }
 

@@ -207,16 +207,25 @@ impl ProjectRegistry {
         connection.execute(
             "INSERT INTO project_workspace_state (
                 project_id,
+                active_pane_id,
+                is_split_view,
+                rail_width,
                 selected_file_path,
                 tree_expanded_paths_json,
                 terminal_pane_sizes_json
-            ) VALUES (?1, ?2, ?3, ?4)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(project_id) DO UPDATE SET
+                active_pane_id = excluded.active_pane_id,
+                is_split_view = excluded.is_split_view,
+                rail_width = excluded.rail_width,
                 selected_file_path = excluded.selected_file_path,
                 tree_expanded_paths_json = excluded.tree_expanded_paths_json,
                 terminal_pane_sizes_json = excluded.terminal_pane_sizes_json",
             params![
                 project_id,
+                workspace_state.active_pane_id,
+                workspace_state.is_split_view,
+                workspace_state.rail_width,
                 workspace_state.selected_file_path,
                 tree_expanded_paths,
                 terminal_pane_sizes
@@ -288,25 +297,45 @@ impl ProjectRegistry {
         let connection = self.connection()?;
         let row = connection
             .query_row(
-                "SELECT selected_file_path, tree_expanded_paths_json, terminal_pane_sizes_json
+                "SELECT
+                    active_pane_id,
+                    is_split_view,
+                    rail_width,
+                    selected_file_path,
+                    tree_expanded_paths_json,
+                    terminal_pane_sizes_json
                 FROM project_workspace_state
                 WHERE project_id = ?1",
                 params![project_id],
                 |row| {
                     Ok((
                         row.get::<_, Option<String>>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
                     ))
                 },
             )
             .optional()?;
 
-        let Some((selected_file_path, tree_expanded_paths, terminal_pane_sizes)) = row else {
+        let Some((
+            active_pane_id,
+            is_split_view,
+            rail_width,
+            selected_file_path,
+            tree_expanded_paths,
+            terminal_pane_sizes,
+        )) = row
+        else {
             return Ok(ProjectWorkspaceState::default());
         };
 
         Ok(ProjectWorkspaceState {
+            active_pane_id,
+            is_split_view,
+            rail_width,
             selected_file_path,
             terminal_pane_sizes: serde_json::from_str(&terminal_pane_sizes).unwrap_or_default(),
             tree_expanded_paths: serde_json::from_str(&tree_expanded_paths).unwrap_or_default(),
@@ -451,6 +480,9 @@ fn initialize_database(path: &PathBuf) -> Result<()> {
         );
         CREATE TABLE IF NOT EXISTS project_workspace_state (
             project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            active_pane_id TEXT,
+            is_split_view INTEGER NOT NULL DEFAULT 1,
+            rail_width REAL NOT NULL DEFAULT 44,
             selected_file_path TEXT,
             tree_expanded_paths_json TEXT NOT NULL DEFAULT '{}',
             terminal_pane_sizes_json TEXT NOT NULL DEFAULT '[]'
@@ -463,6 +495,37 @@ fn initialize_database(path: &PathBuf) -> Result<()> {
             PRIMARY KEY(project_id, pane_id)
         );",
     )?;
+    ensure_workspace_state_columns(&connection)?;
+
+    Ok(())
+}
+
+fn ensure_workspace_state_columns(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(project_workspace_state)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+
+    if !columns.contains("active_pane_id") {
+        connection.execute(
+            "ALTER TABLE project_workspace_state ADD COLUMN active_pane_id TEXT",
+            [],
+        )?;
+    }
+
+    if !columns.contains("is_split_view") {
+        connection.execute(
+            "ALTER TABLE project_workspace_state ADD COLUMN is_split_view INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
+    }
+
+    if !columns.contains("rail_width") {
+        connection.execute(
+            "ALTER TABLE project_workspace_state ADD COLUMN rail_width REAL NOT NULL DEFAULT 44",
+            [],
+        )?;
+    }
 
     Ok(())
 }
@@ -582,6 +645,9 @@ mod tests {
         registry.save_workspace_state(
             &project_id,
             ProjectWorkspaceState {
+                active_pane_id: Some("split".into()),
+                is_split_view: false,
+                rail_width: 96.0,
                 selected_file_path: Some("src/App.tsx".into()),
                 terminal_pane_sizes: vec![40.0, 60.0],
                 tree_expanded_paths: HashMap::from([
@@ -609,6 +675,9 @@ mod tests {
         assert_eq!(
             reloaded.workspace_state_for(&project_id)?,
             ProjectWorkspaceState {
+                active_pane_id: Some("split".into()),
+                is_split_view: false,
+                rail_width: 96.0,
                 selected_file_path: Some("src/App.tsx".into()),
                 terminal_pane_sizes: vec![40.0, 60.0],
                 tree_expanded_paths: HashMap::from([

@@ -4,10 +4,14 @@ import * as React from 'react'
 
 import { cn } from '../../lib/utils'
 
-export const Dialog = DialogPrimitive.Root
-export const DialogTrigger = DialogPrimitive.Trigger
-export const DialogPortal = DialogPrimitive.Portal
-export const DialogClose = DialogPrimitive.Close
+const DialogPortal = DialogPrimitive.Portal
+
+export function Dialog({
+  children,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Root>): React.ReactElement {
+  return <DialogPrimitive.Root {...props}>{children}</DialogPrimitive.Root>
+}
 
 export const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
@@ -29,11 +33,14 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 export const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    hideCloseButton?: boolean
+    overlayClassName?: string
+  }
+>(({ className, children, hideCloseButton = false, overlayClassName, ...props }, ref) => {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         className={cn(
           'fixed left-1/2 top-1/2 z-50 flex w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-[10px] border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-2xl shadow-black/40',
@@ -43,10 +50,12 @@ export const DialogContent = React.forwardRef<
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]">
-          <X className="h-4 w-4" />
-          <span className="sr-only">关闭</span>
-        </DialogPrimitive.Close>
+        {hideCloseButton ? null : (
+          <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-overlay)] hover:text-[var(--text-primary)]">
+            <X className="h-4 w-4" />
+            <span className="sr-only">关闭</span>
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </DialogPortal>
   )

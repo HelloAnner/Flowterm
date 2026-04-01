@@ -12,6 +12,7 @@ import nightOwlData from '../../themes/night-owl.json'
 import nordData from '../../themes/nord.json'
 import oneDarkProData from '../../themes/one-dark-pro.json'
 import tokyoNightData from '../../themes/tokyo-night.json'
+import vscodeDarkData from '../../themes/vscode-dark.json'
 
 export interface TerminalPalette {
   background: string
@@ -53,6 +54,7 @@ type ThemeJsonPayload = Omit<AppTheme, 'colorScheme'> & {
 
 const themes = [
   normalizeTheme(flowtermWarmDarkData),
+  normalizeTheme(vscodeDarkData),
   normalizeTheme(cursorDarkData),
   normalizeTheme(ghosttyDarkData),
   normalizeTheme(githubDarkDefaultData),
@@ -180,13 +182,13 @@ function resolveDerivedThemeCssVariables(theme: AppTheme): Record<string, string
     '--rail-active-bg': theme.ui['sidebar-active-bg'] ?? theme.ui['interactive-hover'] ?? 'transparent',
     '--rail-active-border': theme.ui['sidebar-active-border'] ?? theme.ui['border-default'] ?? 'transparent',
     '--rail-bg': theme.ui['bg-elevated'] ?? theme.terminal.background,
-    '--rail-hover-bg': isLight ? 'rgba(15, 23, 42, 0.04)' : 'rgba(255, 255, 255, 0.03)',
-    '--terminal-depth-shadow': isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(0, 0, 0, 0.2)',
+    '--rail-hover-bg': isLight ? 'rgba(88, 72, 56, 0.04)' : 'rgba(255, 245, 230, 0.03)',
+    '--terminal-depth-shadow': isLight ? 'rgba(88, 72, 56, 0.03)' : 'rgba(0, 0, 0, 0.18)',
     '--terminal-toolbar-bg': theme.ui['bg-elevated'] ?? theme.terminal.background,
     '--terminal-pane-bg': theme.ui['terminal-bg'] ?? theme.terminal.background,
     '--terminal-tint-primary': theme.ui['ambient-primary'] ?? 'transparent',
     '--terminal-tint-secondary': theme.ui['ambient-secondary'] ?? 'transparent',
-    '--terminal-glass-bg': isLight ? 'rgba(15, 23, 42, 0.04)' : 'rgba(255, 255, 255, 0.03)',
-    '--terminal-glass-strong': isLight ? 'rgba(15, 23, 42, 0.06)' : 'rgba(255, 255, 255, 0.05)',
+    '--terminal-glass-bg': isLight ? 'rgba(88, 72, 56, 0.04)' : 'rgba(255, 245, 230, 0.04)',
+    '--terminal-glass-strong': isLight ? 'rgba(88, 72, 56, 0.06)' : 'rgba(255, 245, 230, 0.06)',
   }
 }

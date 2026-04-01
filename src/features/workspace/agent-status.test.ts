@@ -33,7 +33,6 @@ describe('agent status banner', () => {
     expect(
       resolveAgentStatusCopy(createStatus({ agent: 'claude-code', phase: 'completed' })),
     ).toEqual({
-      detail: '已完成，等待下一步',
       title: 'Claude Code 已完成',
       tone: 'settled',
     })

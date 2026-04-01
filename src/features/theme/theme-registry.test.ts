@@ -10,6 +10,7 @@ describe('theme registry', () => {
   it('exposes the bundled editor-style themes', () => {
     expect(listThemes().map((theme) => theme.id)).toEqual([
       'flowterm-warm-dark',
+      'vscode-dark',
       'cursor-dark',
       'ghostty-dark',
       'github-dark-default',
@@ -95,12 +96,12 @@ describe('theme registry', () => {
       '--rail-active-bg': 'rgba(78, 143, 206, 0.08)',
       '--rail-active-border': 'rgba(78, 143, 206, 0.4)',
       '--rail-bg': '#f5f5f5',
-      '--rail-hover-bg': 'rgba(15, 23, 42, 0.04)',
-      '--terminal-depth-shadow': 'rgba(15, 23, 42, 0.03)',
+      '--rail-hover-bg': 'rgba(88, 72, 56, 0.04)',
+      '--terminal-depth-shadow': 'rgba(88, 72, 56, 0.03)',
       '--terminal-toolbar-bg': '#f5f5f5',
       '--terminal-pane-bg': '#ffffff',
-      '--terminal-glass-bg': 'rgba(15, 23, 42, 0.04)',
-      '--terminal-glass-strong': 'rgba(15, 23, 42, 0.06)',
+      '--terminal-glass-bg': 'rgba(88, 72, 56, 0.04)',
+      '--terminal-glass-strong': 'rgba(88, 72, 56, 0.06)',
     })
   })
 })

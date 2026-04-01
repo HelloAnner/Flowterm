@@ -52,6 +52,22 @@ describe('buildFileTree', () => {
     expect(rustFolder?.changeCount).toBe(2)
     expect(rustFolder?.hasLiveActivity).toBe(true)
   })
+
+  it('keeps explicit empty folders in the tree', () => {
+    const tree = buildFileTree([
+      ...projectFiles,
+      {
+        path: 'src/snippets',
+        kind: 'folder',
+        gitStatus: ' ',
+        liveStatus: 'idle',
+      },
+    ])
+    const srcFolder = tree.find((node) => node.path === 'src')
+
+    expect(srcFolder?.children.map((child) => child.name)).toEqual(['app', 'snippets'])
+    expect(srcFolder?.children.find((child) => child.name === 'snippets')?.kind).toBe('folder')
+  })
 })
 
 describe('summarizeProjectSnapshot', () => {

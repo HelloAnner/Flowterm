@@ -22,42 +22,42 @@ export interface ProjectSnapshotSummary {
 export function buildFileTree(files: ProjectFileEntry[]): FileTreeNode[] {
   const root = new Map<string, FileTreeNode>()
 
-  for (const file of files) {
-    insertFileNode(root, file)
+  for (const entry of files) {
+    insertTreeEntry(root, entry)
   }
 
-  return sortNodes([...root.values()])
+  return finalizeNodes([...root.values()])
 }
 
 export function summarizeProjectSnapshot(
   files: ProjectFileEntry[],
 ): ProjectSnapshotSummary {
   return {
-    totalFileCount: files.length,
-    changedFileCount: files.filter((file) => file.gitStatus !== ' ').length,
-    untrackedFileCount: files.filter((file) => file.gitStatus === '?').length,
+    totalFileCount: files.filter((file) => file.kind === 'file').length,
+    changedFileCount: files.filter((file) => file.kind === 'file' && file.gitStatus !== ' ').length,
+    untrackedFileCount: files.filter((file) => file.kind === 'file' && file.gitStatus === '?').length,
     hasLiveActivity: files.some((file) => file.liveStatus !== 'idle'),
   }
 }
 
-function insertFileNode(
+function insertTreeEntry(
   root: Map<string, FileTreeNode>,
-  file: ProjectFileEntry,
+  entry: ProjectFileEntry,
 ): void {
-  const segments = file.path.split('/').filter(Boolean)
-  const [head, ...tail] = segments
+  const segments = entry.path.split('/').filter(Boolean)
 
-  if (!head) {
+  if (segments.length === 0) {
     return
   }
 
-  const node = root.get(head) ?? createNode(head, head, tail.length === 0 ? 'file' : 'folder')
+  const [head, ...tail] = segments
+  const rootNode = root.get(head) ?? createNode(head, head, tail.length === 0 ? entry.kind : 'folder')
 
   if (!root.has(head)) {
-    root.set(head, node)
+    root.set(head, rootNode)
   }
 
-  updateNode(node, head, tail, file)
+  insertTreeEntrySegments(rootNode, head, tail, entry)
 }
 
 function createNode(
@@ -76,12 +76,9 @@ function createNode(
   }
 }
 
-function sortNodes(nodes: FileTreeNode[]): FileTreeNode[] {
+function finalizeNodes(nodes: FileTreeNode[]): FileTreeNode[] {
   return nodes
-    .map((node) => ({
-      ...node,
-      children: sortNodes(node.children),
-    }))
+    .map((node) => finalizeNode(node))
     .sort((left, right) => {
       if (left.kind !== right.kind) {
         return left.kind === 'folder' ? -1 : 1
@@ -90,40 +87,71 @@ function sortNodes(nodes: FileTreeNode[]): FileTreeNode[] {
     })
 }
 
-function hasChange(gitStatus: GitStatusCode): boolean {
-  return gitStatus !== ' '
+function finalizeNode(node: FileTreeNode): FileTreeNode {
+  const children = finalizeNodes(node.children)
+
+  if (node.kind === 'file') {
+    return {
+      ...node,
+      changeCount: hasChange(node.gitStatus),
+      children,
+    }
+  }
+
+  return {
+    ...node,
+    changeCount: children.reduce((count, child) => count + child.changeCount, 0),
+    children,
+    gitStatus: null,
+    hasLiveActivity: node.hasLiveActivity || children.some((child) => child.hasLiveActivity),
+  }
 }
 
-function updateNode(
+function insertTreeEntrySegments(
   node: FileTreeNode,
   currentPath: string,
   remainingSegments: string[],
-  file: ProjectFileEntry,
+  entry: ProjectFileEntry,
 ): void {
   if (remainingSegments.length === 0) {
-    node.changeCount = hasChange(file.gitStatus) ? 1 : 0
-    node.gitStatus = file.gitStatus
-    node.hasLiveActivity = file.liveStatus !== 'idle'
+    applyLeafState(node, entry)
     return
-  }
-
-  if (hasChange(file.gitStatus)) {
-    node.changeCount += 1
-  }
-  if (file.liveStatus !== 'idle') {
-    node.hasLiveActivity = true
   }
 
   const [head, ...tail] = remainingSegments
   const childPath = `${currentPath}/${head}`
+  const isLeaf = tail.length === 0
+  const childKind = isLeaf ? entry.kind : 'folder'
   const existingChild = node.children.find((child) => child.name === head)
-  const child =
-    existingChild ??
-    createNode(head, childPath, tail.length === 0 ? 'file' : 'folder')
+  const child = existingChild ?? createNode(head, childPath, childKind)
 
   if (!existingChild) {
     node.children.push(child)
+  } else if (childKind === 'folder') {
+    existingChild.kind = 'folder'
   }
 
-  updateNode(child, childPath, tail, file)
+  insertTreeEntrySegments(child, childPath, tail, entry)
+}
+
+function applyLeafState(
+  node: FileTreeNode,
+  entry: ProjectFileEntry,
+): void {
+  node.hasLiveActivity = entry.liveStatus !== 'idle'
+
+  if (entry.kind === 'folder') {
+    node.gitStatus = null
+    return
+  }
+
+  node.gitStatus = entry.gitStatus
+}
+
+function hasChange(gitStatus: GitStatusCode | null): number {
+  if (!gitStatus || gitStatus === ' ') {
+    return 0
+  }
+
+  return 1
 }

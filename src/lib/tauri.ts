@@ -7,6 +7,7 @@ import type {
   FilePreview,
   PerformanceProbeReport,
   PerformanceProbeState,
+  ProjectEntryKind,
   ProjectWorkspaceState,
   ProjectRefreshEvent,
   ProjectSnapshot,
@@ -53,6 +54,9 @@ export async function refreshProjectSnapshot(
   return invoke<ProjectSnapshot>('refresh_project_snapshot', { projectId })
 }
 
+// In-flight deduplication: reuse pending IPC for identical file preview requests
+const previewInflight = new Map<string, Promise<FilePreview>>()
+
 export async function readFilePreview(
   projectId: string,
   path: string,
@@ -61,11 +65,48 @@ export async function readFilePreview(
     lineCount?: number
   },
 ): Promise<FilePreview> {
-  return invoke<FilePreview>('read_file_preview', {
+  const key = `${projectId}::${path}::${options?.startLine ?? 0}::${options?.lineCount ?? 0}`
+  const pending = previewInflight.get(key)
+
+  if (pending) {
+    return pending
+  }
+
+  const request = invoke<FilePreview>('read_file_preview', {
     lineCount: options?.lineCount,
     path,
     projectId,
     startLine: options?.startLine,
+  }).finally(() => {
+    previewInflight.delete(key)
+  })
+
+  previewInflight.set(key, request)
+
+  return request
+}
+
+export async function writeProjectFile(
+  projectId: string,
+  path: string,
+  content: string,
+): Promise<FilePreview> {
+  return invoke<FilePreview>('write_project_file', {
+    content,
+    path,
+    projectId,
+  })
+}
+
+export async function createProjectEntry(
+  projectId: string,
+  path: string,
+  kind: ProjectEntryKind,
+): Promise<string> {
+  return invoke<string>('create_project_entry', {
+    kind,
+    path,
+    projectId,
   })
 }
 

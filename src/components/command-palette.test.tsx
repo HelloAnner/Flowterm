@@ -35,6 +35,31 @@ describe('CommandPalette', () => {
     expect(screen.getByRole('option', { name: /Terminal: Split Terminal/i })).toBeInTheDocument()
   })
 
+  it('uses a top-anchored compact layout', () => {
+    render(
+      <CommandPalette
+        activeProjectId="project-a"
+        activeThemeId="flowterm-warm-dark"
+        files={[]}
+        isOpen
+        onClose={vi.fn()}
+        onOpenProject={vi.fn()}
+        onSelectFile={vi.fn()}
+        onSelectProject={vi.fn()}
+        onSelectTheme={vi.fn()}
+        onSplitTerminal={vi.fn()}
+        projects={[]}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Command Palette' })
+    const input = screen.getByRole('combobox', { name: 'Command Palette' })
+
+    expect(dialog.className).toContain('palette-dialog')
+    expect(input.className).toContain('palette-input')
+    expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument()
+  })
+
   it('opens the color theme picker and lists the modern bundled themes', async () => {
     const user = userEvent.setup()
     const handleClose = vi.fn()
@@ -65,9 +90,7 @@ describe('CommandPalette', () => {
 
     await user.keyboard('{Enter}')
 
-    expect(
-      screen.getByRole('heading', { name: 'Preferences: Color Theme' }),
-    ).toBeInTheDocument()
+    expect(screen.getByText('Preferences: Color Theme')).toBeInTheDocument()
     expect(screen.getByText('Dark')).toBeInTheDocument()
     expect(screen.getByText('Light')).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /Cursor Dark/i })).toBeInTheDocument()
@@ -86,6 +109,44 @@ describe('CommandPalette', () => {
 
     expect(handleSelectTheme).toHaveBeenCalledWith('github-dark-default')
     expect(handleClose).toHaveBeenCalled()
+  })
+
+  it('previews theme changes while browsing and restores on escape', async () => {
+    const user = userEvent.setup()
+    const handlePreviewTheme = vi.fn()
+    const handleResetThemePreview = vi.fn()
+
+    render(
+      <CommandPalette
+        activeProjectId="project-a"
+        activeThemeId="flowterm-warm-dark"
+        currentThemeId="flowterm-warm-dark"
+        files={[]}
+        isOpen
+        onClose={vi.fn()}
+        onOpenProject={vi.fn()}
+        onPreviewTheme={handlePreviewTheme}
+        onResetThemePreview={handleResetThemePreview}
+        onSelectFile={vi.fn()}
+        onSelectProject={vi.fn()}
+        onSelectTheme={vi.fn()}
+        onSplitTerminal={vi.fn()}
+        projects={[]}
+      />,
+    )
+
+    const input = screen.getByRole('combobox', { name: 'Command Palette' })
+
+    await user.type(input, 'theme')
+    await user.keyboard('{Enter}')
+    handlePreviewTheme.mockClear()
+
+    await user.keyboard('{ArrowDown}')
+    expect(handlePreviewTheme).toHaveBeenCalledWith('vscode-dark')
+
+    // First Escape returns to root (and resets preview)
+    await user.keyboard('{Escape}')
+    expect(handleResetThemePreview).toHaveBeenCalledWith('flowterm-warm-dark')
   })
 
   it('opens the file picker and selects a file', async () => {
@@ -116,7 +177,6 @@ describe('CommandPalette', () => {
     await user.type(input, 'open file')
     await user.keyboard('{Enter}{ArrowDown}{Enter}')
 
-    expect(screen.getByRole('heading', { name: 'Files: Open File' })).toBeInTheDocument()
     expect(handleSelectFile).toHaveBeenCalledWith('src/App.tsx')
     expect(handleClose).toHaveBeenCalled()
   })

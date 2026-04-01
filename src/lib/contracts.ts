@@ -1,4 +1,5 @@
 export type GitStatusCode = ' ' | 'A' | 'D' | 'M' | '?'
+export type ProjectEntryKind = 'file' | 'folder'
 
 export type LiveStatus = 'added' | 'deleted' | 'idle' | 'modified'
 
@@ -13,7 +14,7 @@ export interface AgentStatusSnapshot {
 
 export interface ProjectFileEntry {
   path: string
-  kind: 'file'
+  kind: ProjectEntryKind
   gitStatus: GitStatusCode
   liveStatus: LiveStatus
 }
@@ -119,4 +120,55 @@ export interface PerformanceProbeReport {
   metadata: Record<string, string>
   metrics: Record<string, number>
   scenario: string
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge Board
+// ---------------------------------------------------------------------------
+
+export type CardType = 'bug' | 'decision' | 'insight' | 'pitfall' | 'task'
+export type CardStatus = 'closed' | 'in-progress' | 'open' | 'resolved'
+export type Severity = 1 | 2 | 3 | 4 | 5
+
+export type RelationType =
+  | 'belongs-to'
+  | 'depends-on'
+  | 'guided'
+  | 'influenced'
+  | 'relates-to'
+  | 'resolves'
+  | 'triggered'
+
+export interface KnowledgeCard {
+  id: string
+  type: CardType
+  title: string
+  summary: string
+  projectId: string
+  filePath?: string
+  tags: string[]
+  status: CardStatus
+  severity?: Severity
+  sourceText?: string
+  createdAt: number
+  updatedAt: number
+  resolvedAt?: number
+}
+
+export interface CardRelation {
+  id: string
+  sourceCardId: string
+  targetCardId: string
+  type: RelationType
+  description?: string
+  createdAt: number
+}
+
+export type KnowledgeViewMode = 'kanban' | 'timeline'
+
+export interface CardFilters {
+  types: CardType[]
+  tags: string[]
+  statuses: CardStatus[]
+  searchQuery: string
 }

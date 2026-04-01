@@ -1,7 +1,16 @@
-import type { ReactElement } from 'react'
-import { Plus, X } from 'lucide-react'
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+} from 'react'
+import { Check, History, Plus, X } from 'lucide-react'
 
 import { Button } from './ui/button'
+import { Input } from './ui/input'
 import { cn } from '../lib/utils'
 import type { ProjectSummary } from '../lib/contracts'
 
@@ -9,26 +18,173 @@ interface WorkspaceTabBarProps {
   activeProjectId: string | null
   onAddProject: () => void
   onRemoveProject: (projectId: string) => void
+  onReorderProjects: (
+    draggedProjectId: string,
+    targetProjectId: string,
+    position?: 'after' | 'before',
+  ) => void
   onSelectProject: (projectId: string) => void
   projects: ProjectSummary[]
+  recentProjects: ProjectSummary[]
 }
 
-export function WorkspaceTabBar({
+export const WorkspaceTabBar = memo(function WorkspaceTabBar({
   activeProjectId,
   onAddProject,
   onRemoveProject,
+  onReorderProjects,
   onSelectProject,
   projects,
+  recentProjects,
 }: WorkspaceTabBarProps): ReactElement {
+  const [isRecentMenuOpen, setIsRecentMenuOpen] = useState(false)
+  const [recentProjectQuery, setRecentProjectQuery] = useState('')
+  const [highlightedProjectId, setHighlightedProjectId] = useState<string | null>(null)
+  const [dropIndicator, setDropIndicator] = useState<{
+    position: 'after' | 'before'
+    projectId: string
+  } | null>(null)
+  const draggedProjectIdRef = useRef<string | null>(null)
+  const recentMenuRef = useRef<HTMLDivElement | null>(null)
+  const recentSearchInputRef = useRef<HTMLInputElement | null>(null)
+  const filteredProjects = useMemo(() => {
+    const normalizedQuery = recentProjectQuery.trim().toLowerCase()
+
+    if (!normalizedQuery) {
+      return recentProjects
+    }
+
+    return recentProjects.filter((project) =>
+      `${project.name} ${project.path}`.toLowerCase().includes(normalizedQuery),
+    )
+  }, [recentProjectQuery, recentProjects])
+  const resolvedHighlightedProjectId = useMemo(() => {
+    if (!isRecentMenuOpen) {
+      return highlightedProjectId
+    }
+
+    if (
+      highlightedProjectId &&
+      filteredProjects.some((project) => project.id === highlightedProjectId)
+    ) {
+      return highlightedProjectId
+    }
+
+    if (filteredProjects.some((project) => project.id === activeProjectId)) {
+      return activeProjectId
+    }
+
+    return filteredProjects[0]?.id ?? null
+  }, [activeProjectId, filteredProjects, highlightedProjectId, isRecentMenuOpen])
+
+  useEffect(() => {
+    if (!isRecentMenuOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent): void {
+      if (recentMenuRef.current?.contains(event.target as Node)) {
+        return
+      }
+
+      setIsRecentMenuOpen(false)
+    }
+
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        setIsRecentMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleEscape)
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleEscape)
+    }
+  }, [isRecentMenuOpen])
+
+  useEffect(() => {
+    if (!isRecentMenuOpen) {
+      return
+    }
+
+    window.requestAnimationFrame(() => {
+      recentSearchInputRef.current?.focus()
+      recentSearchInputRef.current?.select()
+    })
+  }, [isRecentMenuOpen])
+
+  function selectRecentProject(projectId: string): void {
+    setIsRecentMenuOpen(false)
+    setRecentProjectQuery('')
+    setHighlightedProjectId(projectId)
+    void onSelectProject(projectId)
+  }
+
+  function moveHighlight(direction: 'next' | 'previous'): void {
+    if (filteredProjects.length === 0) {
+      return
+    }
+
+    const currentIndex = filteredProjects.findIndex(
+      (project) => project.id === resolvedHighlightedProjectId,
+    )
+    const baseIndex = currentIndex >= 0 ? currentIndex : 0
+    const nextIndex =
+      direction === 'next'
+        ? (baseIndex + 1) % filteredProjects.length
+        : (baseIndex - 1 + filteredProjects.length) % filteredProjects.length
+
+    setHighlightedProjectId(filteredProjects[nextIndex]?.id ?? null)
+  }
+
+  function handleRecentSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      moveHighlight('next')
+      return
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      moveHighlight('previous')
+      return
+    }
+
+    if (event.key === 'Enter' && resolvedHighlightedProjectId) {
+      event.preventDefault()
+      selectRecentProject(resolvedHighlightedProjectId)
+    }
+  }
+
+  function toggleRecentMenu(): void {
+    setIsRecentMenuOpen((currentValue) => {
+      const nextValue = !currentValue
+
+      if (nextValue) {
+        setRecentProjectQuery('')
+        setHighlightedProjectId(activeProjectId ?? recentProjects[0]?.id ?? null)
+      }
+
+      return nextValue
+    })
+  }
+
   return (
-    <header className="flex h-9 items-stretch border-b border-[var(--border-subtle)] bg-[var(--bg-base)]">
-      <div className="flex shrink-0 items-center px-4">
-        <span className="select-none font-mono text-[11px] tracking-[0.14em] text-[var(--text-muted)] uppercase">
-          flowterm
+    <header className="tab-bar" data-tauri-drag-region>
+      <div className="tab-bar__brand">
+        <span className="tab-bar__brand-label">
+          Flowterm
         </span>
       </div>
-      <div className="h-full w-px bg-[var(--border-subtle)]" />
-      <div className="flex min-w-0 flex-1 items-stretch">
+      <div className="tab-bar__divider" />
+      <div
+        aria-label="项目标签"
+        className="tab-bar__tabs"
+        role="tablist"
+      >
         {projects.map((project) => {
           const isActive = project.id === activeProjectId
           const showsRunningIndicator = project.terminalState === 'running'
@@ -36,52 +192,206 @@ export function WorkspaceTabBar({
 
           return (
             <button
+              aria-current={isActive ? 'page' : undefined}
+              aria-selected={isActive}
               className={cn(
-                'group flex h-9 min-w-0 items-center gap-2 border-b px-4 text-[13px]',
-                isActive
-                  ? 'border-[var(--accent-amber)] bg-[var(--bg-elevated)] text-[var(--text-primary)]'
-                  : 'border-transparent text-[var(--text-muted)] hover:bg-[var(--bg-elevated)]/60 hover:text-[var(--text-secondary)]',
+                'tab-bar__tab',
+                isActive && 'tab-bar__tab--active',
               )}
+              data-state={isActive ? 'active' : 'inactive'}
+              data-drop-position={
+                dropIndicator?.projectId === project.id ? dropIndicator.position : undefined
+              }
+              draggable
               key={project.id}
+              onDragEnd={() => {
+                draggedProjectIdRef.current = null
+                setDropIndicator(null)
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                if (!draggedProjectIdRef.current || draggedProjectIdRef.current === project.id) {
+                  setDropIndicator(null)
+                  return
+                }
+
+                const bounds = event.currentTarget.getBoundingClientRect()
+                const position =
+                  event.clientX > bounds.left + bounds.width / 2 ? 'after' : 'before'
+
+                setDropIndicator({
+                  position,
+                  projectId: project.id,
+                })
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDropIndicator((current) =>
+                    current?.projectId === project.id ? null : current,
+                  )
+                }
+              }}
+              onDragStart={(event) => {
+                draggedProjectIdRef.current = project.id
+                event.dataTransfer.effectAllowed = 'move'
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+
+                if (
+                  !draggedProjectIdRef.current ||
+                  draggedProjectIdRef.current === project.id
+                ) {
+                  draggedProjectIdRef.current = null
+                  setDropIndicator(null)
+                  return
+                }
+
+                onReorderProjects(
+                  draggedProjectIdRef.current,
+                  project.id,
+                  dropIndicator?.projectId === project.id ? dropIndicator.position : 'before',
+                )
+                draggedProjectIdRef.current = null
+                setDropIndicator(null)
+              }}
               onClick={() => void onSelectProject(project.id)}
+              role="tab"
               type="button"
             >
-              <span className="truncate font-mono">{project.name}</span>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'tab-bar__drop-indicator',
+                  dropIndicator?.projectId === project.id &&
+                    dropIndicator.position === 'before'
+                    ? 'tab-bar__drop-indicator--before'
+                    : '',
+                  dropIndicator?.projectId === project.id &&
+                    dropIndicator.position === 'after'
+                    ? 'tab-bar__drop-indicator--after'
+                    : '',
+                )}
+              />
+              <span className="tab-bar__tab-label">{project.name}</span>
               {showsRunningIndicator ? (
                 <span
                   aria-label="Agent 运行中"
-                  className="relative flex h-2.5 w-2.5 items-center justify-center"
+                  className="tab-bar__indicator tab-bar__indicator--running"
                   role="img"
-                >
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-[var(--activity-halo)] animate-pulse" />
-                  <span className="relative h-1.5 w-1.5 rounded-full bg-[var(--accent-sage)] shadow-[var(--activity-glow)]" />
-                </span>
+                />
               ) : null}
               {showsDirtyIndicator ? (
                 <span
                   aria-label="未提交改动"
-                  className="h-1.5 w-1.5 rounded-full bg-[var(--accent-amber)] shadow-[var(--dirty-glow)]"
+                  className="tab-bar__indicator tab-bar__indicator--dirty"
                   role="img"
                 />
               ) : null}
-              <span
-                className="ml-0.5 rounded p-0.5 text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-overlay)] hover:text-[var(--text-secondary)] group-hover:opacity-100"
+              <button
+                aria-label={`关闭 ${project.name}`}
+                className={cn(
+                  'tab-bar__close',
+                  isActive ? 'tab-bar__close--active' : 'tab-bar__close--inactive',
+                )}
                 onClick={(event) => {
                   event.stopPropagation()
                   void onRemoveProject(project.id)
                 }}
+                type="button"
               >
                 <X className="h-3 w-3" />
-              </span>
+              </button>
             </button>
           )
         })}
       </div>
-      <div className="flex items-center pr-2">
-        <Button onClick={onAddProject} size="icon" variant="ghost">
-          <Plus className="h-3.5 w-3.5" />
+      <div className="tab-bar__actions" ref={recentMenuRef}>
+        <Button
+          aria-expanded={isRecentMenuOpen}
+          aria-haspopup="menu"
+          aria-label="最近项目"
+          disabled={projects.length === 0}
+          onClick={toggleRecentMenu}
+          size="icon"
+          variant="ghost"
+          className="text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+        >
+          <History className="h-4 w-4" />
+        </Button>
+        {isRecentMenuOpen ? (
+          <div
+            aria-label="最近项目列表"
+            className="absolute top-full right-0 z-20 mt-2 flex max-h-80 w-80 flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--surface-shadow)]"
+            role="menu"
+          >
+            <div className="border-b border-[var(--border-subtle)] px-4 py-3">
+              <p className="text-[11px] tracking-wide text-[var(--text-muted)] uppercase font-medium">
+                最近项目
+              </p>
+              <Input
+                aria-label="搜索最近项目"
+                className="mt-3 h-9 bg-[var(--bg-base)] border-[var(--border-subtle)]"
+                onChange={(event) => setRecentProjectQuery(event.target.value)}
+                onKeyDown={handleRecentSearchKeyDown}
+                placeholder="搜索项目名称或路径"
+                ref={recentSearchInputRef}
+                value={recentProjectQuery}
+              />
+            </div>
+            <div className="flex max-h-64 flex-col overflow-y-auto py-1">
+              {filteredProjects.length === 0 ? (
+                <div className="px-4 py-6 text-sm text-[var(--text-muted)]">
+                  没有匹配的最近项目
+                </div>
+              ) : filteredProjects.map((project) => {
+                const isActive = project.id === activeProjectId
+                const isHighlighted = project.id === resolvedHighlightedProjectId
+
+                return (
+                  <button
+                    className={cn(
+                      'flex items-start gap-3 px-4 py-3 text-left transition-colors',
+                      isHighlighted ? 'bg-[var(--rail-hover-bg)]' : 'hover:bg-[var(--rail-hover-bg)]',
+                    )}
+                    key={project.id}
+                    onClick={() => selectRecentProject(project.id)}
+                    onMouseEnter={() => setHighlightedProjectId(project.id)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-[var(--accent-amber)]">
+                      {isActive ? <Check className="h-3.5 w-3.5" /> : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
+                        <span className="truncate">{project.name}</span>
+                        {isActive ? (
+                          <span className="rounded-full bg-[var(--rail-active-bg)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)]">
+                            当前
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-[var(--text-muted)]">
+                        {project.path}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+        <Button
+          aria-label="添加项目"
+          onClick={onAddProject}
+          size="icon"
+          variant="ghost"
+          className="text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+        >
+          <Plus className="h-4 w-4" />
         </Button>
       </div>
     </header>
   )
-}
+})

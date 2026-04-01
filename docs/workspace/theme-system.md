@@ -118,6 +118,15 @@ App 启动后会：
 
 主题列表会按 `Dark` / `Light` 分组展示，避免深浅主题混在一起不好找。
 
+## 设置页入口
+
+除了命令面板，现在也可以从工作区左侧窄边栏底部进入“设置”页。
+
+- 设置页的 `外观` 分类会直接复用 `listThemes()` 返回的主题列表
+- 仍然沿用同一个 `selectTheme()` 行为与 `localStorage` 持久化逻辑
+- 设置页里的主题切换和命令面板切换是同一个状态源
+- 同一页里还提供终端排版设置，用来调节 `fontSize`、`lineHeight`、`letterSpacing`
+
 实现文件：
 
 - `src/components/command-palette.tsx`

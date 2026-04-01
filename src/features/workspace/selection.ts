@@ -4,11 +4,13 @@ export function resolveSelectedFilePath(
   files: ProjectFileEntry[],
   currentSelection: string | null,
 ): string | null {
-  const availablePaths = new Set(files.map((file) => file.path))
+  const availablePaths = new Set(
+    files.filter((file) => file.kind === 'file').map((file) => file.path),
+  )
 
   if (currentSelection && availablePaths.has(currentSelection)) {
     return currentSelection
   }
 
-  return files[0]?.path ?? null
+  return files.find((file) => file.kind === 'file')?.path ?? null
 }

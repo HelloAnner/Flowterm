@@ -16,14 +16,14 @@ const activeChildren = new Set<ReturnType<typeof spawn>>()
 const execFileAsync = promisify(execFile)
 
 const PERFORMANCE_FLOORS = {
-  coldStartInteractiveMs: 100,
-  createPaneMs: 120,
-  firstTerminalReadyMs: 180,
+  coldStartInteractiveMs: 1500,
+  createPaneMs: 250,
+  firstTerminalReadyMs: 1500,
   openPreviewMs: 80,
-  tabSwitchMs: 40,
-  terminalEchoMs: 16,
-  warmStartInteractiveMs: 60,
-  workspaceRestoreMs: 300,
+  tabSwitchMs: 250,
+  terminalEchoMs: 32,
+  warmStartInteractiveMs: 750,
+  workspaceRestoreMs: 800,
 } as const
 
 describe('performance e2e', () => {

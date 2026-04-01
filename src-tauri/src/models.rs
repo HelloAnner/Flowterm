@@ -92,12 +92,28 @@ pub struct PersistedTerminalPane {
     pub pane_id: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct ProjectWorkspaceState {
+    pub active_pane_id: Option<String>,
+    pub is_split_view: bool,
+    pub rail_width: f64,
     pub selected_file_path: Option<String>,
     pub terminal_pane_sizes: Vec<f64>,
     pub tree_expanded_paths: HashMap<String, bool>,
+}
+
+impl Default for ProjectWorkspaceState {
+    fn default() -> Self {
+        Self {
+            active_pane_id: None,
+            is_split_view: true,
+            rail_width: 44.0,
+            selected_file_path: None,
+            terminal_pane_sizes: Vec::new(),
+            tree_expanded_paths: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

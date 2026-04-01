@@ -26,7 +26,7 @@ const files: ProjectFileEntry[] = [
 ]
 
 describe('WorkspaceSidebar', () => {
-  it('shows file totals and changed file totals on the tree entry', () => {
+  it('keeps the file totals in accessibility copy but hides the bottom total label', () => {
     render(
       <WorkspaceSidebar
         files={files}
@@ -40,10 +40,16 @@ describe('WorkspaceSidebar', () => {
     const treeButton = screen.getByRole('button', {
       name: '文件树，3 个文件，2 个改动',
     })
+    const settingsButton = screen.getByRole('button', {
+      name: '设置',
+    })
 
     expect(treeButton).toBeInTheDocument()
-    expect(treeButton).toHaveTextContent('3')
+    expect(settingsButton).toBeInTheDocument()
+    expect(treeButton).toHaveClass('gap-1', 'p-2')
+    expect(settingsButton).toHaveClass('mt-auto')
     expect(treeButton).toHaveTextContent('2')
+    expect(screen.queryByText('3')).not.toBeInTheDocument()
     expect(screen.getByText('tree panel')).toBeInTheDocument()
   })
 })

@@ -174,14 +174,15 @@ async function currentProcessUptime(): Promise<number> {
 
 function pickProbeFile(files: ProjectFileEntry[]): string | null {
   const preferred = ['package.json', 'src/App.tsx', 'README.md', 'src-tauri/src/lib.rs']
+  const fileEntries = files.filter((file) => file.kind === 'file')
 
   for (const candidate of preferred) {
-    if (files.some((file) => file.path === candidate)) {
+    if (fileEntries.some((file) => file.path === candidate)) {
       return candidate
     }
   }
 
-  return files[0]?.path ?? null
+  return fileEntries[0]?.path ?? null
 }
 
 async function persistWorkspaceState(

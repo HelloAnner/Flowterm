@@ -21,10 +21,13 @@ const {
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class MockTerminal {
+    options: Record<string, unknown> = {}
     constructor(options: unknown) {
       terminalConstructor(options)
+      this.options = { ...(options as Record<string, unknown>) }
     }
     dispose = vi.fn()
+    focus = vi.fn()
     loadAddon = vi.fn()
     onData = vi.fn()
     open = vi.fn()
@@ -37,6 +40,13 @@ vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class MockFitAddon {
     fit = fitAddonFit
     proposeDimensions = fitAddonProposeDimensions
+  },
+}))
+
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class MockWebglAddon {
+    dispose = vi.fn()
+    onContextLoss = vi.fn()
   },
 }))
 
@@ -84,7 +94,6 @@ describe('WorkspaceTerminal', () => {
         onLayout={vi.fn()}
         onRemovePane={vi.fn()}
         onSelectPane={vi.fn()}
-        onSetRailWidth={vi.fn()}
         onToggleSplitView={vi.fn()}
         paneSizes={[100]}
         panes={[
@@ -102,12 +111,16 @@ describe('WorkspaceTerminal', () => {
             state: 'idle',
           },
         ]}
-        railWidth={44}
         resizeTerminal={vi.fn().mockResolvedValue(undefined)}
         theme={{
           background: '#000000',
           cursor: '#ffffff',
           foreground: '#cccccc',
+        }}
+        typography={{
+          fontSize: 13,
+          letterSpacing: -0.4,
+          lineHeight: 1.28,
         }}
         writeTerminal={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -115,9 +128,9 @@ describe('WorkspaceTerminal', () => {
 
     expect(terminalConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
-        fontSize: 12,
-        letterSpacing: -0.6,
-        lineHeight: 1.22,
+        fontSize: 13,
+        letterSpacing: -0.4,
+        lineHeight: 1.28,
       }),
     )
   })
@@ -131,7 +144,6 @@ describe('WorkspaceTerminal', () => {
         onLayout={vi.fn()}
         onRemovePane={vi.fn()}
         onSelectPane={vi.fn()}
-        onSetRailWidth={vi.fn()}
         onToggleSplitView={vi.fn()}
         paneSizes={[50, 50]}
         panes={[
@@ -162,12 +174,16 @@ describe('WorkspaceTerminal', () => {
             state: 'running',
           },
         ]}
-        railWidth={160}
         resizeTerminal={vi.fn().mockResolvedValue(undefined)}
         theme={{
           background: '#000000',
           cursor: '#ffffff',
           foreground: '#cccccc',
+        }}
+        typography={{
+          fontSize: 12,
+          letterSpacing: -0.6,
+          lineHeight: 1.22,
         }}
         writeTerminal={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -186,7 +202,6 @@ describe('WorkspaceTerminal', () => {
         onLayout={vi.fn()}
         onRemovePane={vi.fn()}
         onSelectPane={vi.fn()}
-        onSetRailWidth={vi.fn()}
         onToggleSplitView={vi.fn()}
         paneSizes={[50, 50]}
         panes={[
@@ -217,12 +232,16 @@ describe('WorkspaceTerminal', () => {
             state: 'running',
           },
         ]}
-        railWidth={160}
         resizeTerminal={vi.fn().mockResolvedValue(undefined)}
         theme={{
           background: '#000000',
           cursor: '#ffffff',
           foreground: '#cccccc',
+        }}
+        typography={{
+          fontSize: 12,
+          letterSpacing: -0.6,
+          lineHeight: 1.22,
         }}
         writeTerminal={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -242,7 +261,6 @@ describe('WorkspaceTerminal', () => {
         onLayout={vi.fn()}
         onRemovePane={vi.fn()}
         onSelectPane={vi.fn()}
-        onSetRailWidth={vi.fn()}
         onToggleSplitView={vi.fn()}
         paneSizes={[50, 50]}
         panes={[
@@ -273,12 +291,16 @@ describe('WorkspaceTerminal', () => {
             state: 'running',
           },
         ]}
-        railWidth={160}
         resizeTerminal={vi.fn().mockResolvedValue(undefined)}
         theme={{
           background: '#ffffff',
           cursor: '#4e8fce',
           foreground: '#1a1a1a',
+        }}
+        typography={{
+          fontSize: 12,
+          letterSpacing: -0.6,
+          lineHeight: 1.22,
         }}
         writeTerminal={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -288,5 +310,54 @@ describe('WorkspaceTerminal', () => {
     expect(container.querySelector('.terminal-chip')).not.toBeNull()
     expect(container.innerHTML).not.toContain('bg-[rgba(255,255,255,0.02)]')
     expect(container.innerHTML).not.toContain('bg-[rgba(255,255,255,0.03)]')
+  })
+
+  it('renders the agent banner as a light-only signal without visible copy', () => {
+    const { container } = render(
+      <WorkspaceTerminal
+        activePaneId="main"
+        isSplitView={true}
+        onAddPane={vi.fn()}
+        onLayout={vi.fn()}
+        onRemovePane={vi.fn()}
+        onSelectPane={vi.fn()}
+        onToggleSplitView={vi.fn()}
+        paneSizes={[100]}
+        panes={[
+          {
+            agentStatus: {
+              agent: 'claude-code',
+              phase: 'running',
+            },
+            cwd: '/tmp/flowterm',
+            history: '$ pwd',
+            id: 'main',
+            projectId: 'project-a',
+            sessionId: 'session-a',
+            shellLabel: 'zsh',
+            state: 'running',
+          },
+        ]}
+        resizeTerminal={vi.fn().mockResolvedValue(undefined)}
+        theme={{
+          background: '#000000',
+          cursor: '#ffffff',
+          foreground: '#cccccc',
+        }}
+        typography={{
+          fontSize: 12,
+          letterSpacing: -0.6,
+          lineHeight: 1.22,
+        }}
+        writeTerminal={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const banner = container.querySelector('[data-testid="agent-status-light"]')
+    expect(banner).not.toBeNull()
+    expect(banner).toHaveClass('h-1.5', 'w-1.5')
+    expect(screen.queryByText('Claude Code 运行中')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在读取终端输出')).not.toBeInTheDocument()
+    expect(screen.queryByText('运行中')).not.toBeInTheDocument()
   })
 })

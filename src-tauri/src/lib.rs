@@ -135,6 +135,48 @@ fn read_file_preview(
 }
 
 #[tauri::command]
+fn write_project_file(
+    state: State<FlowtermState>,
+    project_id: String,
+    path: String,
+    content: String,
+) -> Result<FilePreview, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+        let live_files = {
+            let registry = state.registry.lock().unwrap();
+            registry.live_files_for(&project_id)
+        };
+
+        git::write_text_preview(&PathBuf::from(project.path), &path, &live_files, &content)
+    })
+}
+
+#[tauri::command]
+fn create_project_entry(
+    state: State<FlowtermState>,
+    project_id: String,
+    path: String,
+    kind: String,
+) -> Result<String, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::create_project_entry(&PathBuf::from(project.path), &path, &kind)
+    })
+}
+
+#[tauri::command]
 fn attach_terminal(
     app: AppHandle,
     state: State<FlowtermState>,
@@ -331,6 +373,7 @@ pub fn run() {
             bootstrap_app,
             close_terminal,
             complete_performance_probe,
+            create_project_entry,
             list_terminals,
             read_file_preview,
             read_performance_probe_state,
@@ -339,6 +382,7 @@ pub fn run() {
             remove_project,
             resize_terminal,
             save_project_workspace,
+            write_project_file,
             write_terminal,
         ])
         .run(tauri::generate_context!())

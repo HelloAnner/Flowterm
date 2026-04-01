@@ -216,7 +216,7 @@ fn create_session(
         pixel_width: 0,
         pixel_height: 0,
     })?;
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let shell = "/bin/zsh".to_string();
     let shell_label = PathBuf::from(&shell)
         .file_name()
         .and_then(|value| value.to_str())
@@ -243,7 +243,7 @@ fn create_session(
     let app_ref = app.clone();
 
     thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
+        let mut buffer = [0u8; 32768];
 
         loop {
             let read = match reader.read(&mut buffer) {
@@ -286,7 +286,10 @@ fn create_session(
                 break;
             }
 
-            let raw_chunk = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let raw_chunk = match std::str::from_utf8(&buffer[..read]) {
+                Ok(s) => s.to_owned(),
+                Err(_) => String::from_utf8_lossy(&buffer[..read]).into_owned(),
+            };
             let (chunk, markers) = strip_terminal_markers(&raw_chunk);
 
             if let Some(cwd) = markers.cwd {
@@ -522,7 +525,7 @@ fn push_history(history: &Arc<Mutex<String>>, chunk: &str) {
 
         if content.len() > MAX_HISTORY_CHARS {
             let start = content.len().saturating_sub(MAX_HISTORY_CHARS);
-            *content = content[start..].to_string();
+            content.drain(..start);
         }
     }
 }

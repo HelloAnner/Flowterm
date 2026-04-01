@@ -1,7 +1,8 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs,
-    path::{Path, PathBuf},
+    fs::File,
+    path::{Component, Path, PathBuf},
     process::Command,
 };
 
@@ -20,17 +21,22 @@ pub struct ProjectScan {
 }
 
 struct WorkspaceFileDiscovery {
-    actual_paths: HashSet<String>,
-    file_paths: Vec<String>,
+    actual_file_paths: HashSet<String>,
+    entries: Vec<DiscoveredWorkspaceEntry>,
     git_repo_roots: BTreeSet<PathBuf>,
+}
+
+struct DiscoveredWorkspaceEntry {
+    path: String,
+    kind: &'static str,
 }
 
 pub fn scan_project(project_path: &Path, live_files: &HashSet<String>) -> Result<ProjectScan> {
     let discovery = discover_workspace_files(project_path)?;
     let statuses = collect_workspace_git_statuses(project_path, &discovery.git_repo_roots);
-    let files = build_project_files(
-        discovery.file_paths,
-        &discovery.actual_paths,
+    let files = build_project_entries(
+        discovery.entries,
+        &discovery.actual_file_paths,
         &statuses,
         live_files,
     );
@@ -121,6 +127,29 @@ pub fn build_file_preview_with_options(
     }
 }
 
+pub fn write_text_preview(
+    project_path: &Path,
+    relative_path: &str,
+    live_files: &HashSet<String>,
+    content: &str,
+) -> Result<FilePreview> {
+    let absolute_path = resolve_workspace_file_path(project_path, relative_path)?;
+
+    if let Some(parent) = absolute_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to prepare parent directory for {}",
+                absolute_path.display()
+            )
+        })?;
+    }
+
+    fs::write(&absolute_path, content)
+        .with_context(|| format!("failed to write preview file {}", absolute_path.display()))?;
+
+    build_file_preview_with_options(project_path, relative_path, live_files, None, None)
+}
+
 #[cfg(test)]
 fn collect_files(
     project_path: &Path,
@@ -128,12 +157,45 @@ fn collect_files(
     live_files: &HashSet<String>,
 ) -> Result<Vec<ProjectFileEntry>> {
     let discovery = discover_workspace_files(project_path)?;
-    Ok(build_project_files(
-        discovery.file_paths,
-        &discovery.actual_paths,
+    Ok(build_project_entries(
+        discovery.entries,
+        &discovery.actual_file_paths,
         statuses,
         live_files,
     ))
+}
+
+pub fn create_project_entry(project_path: &Path, relative_path: &str, kind: &str) -> Result<String> {
+    let absolute_path = resolve_workspace_file_path(project_path, relative_path)?;
+    let normalized_path = normalize_workspace_path(relative_path)?;
+
+    if absolute_path.exists() {
+        anyhow::bail!("entry already exists: {normalized_path}");
+    }
+
+    match kind {
+        "file" => {
+            if let Some(parent) = absolute_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "failed to prepare parent directory for {}",
+                        absolute_path.display()
+                    )
+                })?;
+            }
+
+            File::create(&absolute_path)
+                .with_context(|| format!("failed to create file {}", absolute_path.display()))?;
+        }
+        "folder" => {
+            fs::create_dir_all(&absolute_path).with_context(|| {
+                format!("failed to create folder {}", absolute_path.display())
+            })?;
+        }
+        _ => anyhow::bail!("invalid project entry kind: {kind}"),
+    }
+
+    Ok(normalized_path)
 }
 
 fn build_untracked_preview(
@@ -364,8 +426,8 @@ fn collect_workspace_git_statuses(
 }
 
 fn discover_workspace_files(project_path: &Path) -> Result<WorkspaceFileDiscovery> {
-    let mut actual_paths = HashSet::new();
-    let mut file_paths = Vec::new();
+    let mut actual_file_paths = HashSet::new();
+    let mut entries = Vec::new();
     let mut git_repo_roots = BTreeSet::new();
     let mut repo_root_cache = HashMap::new();
 
@@ -381,6 +443,13 @@ fn discover_workspace_files(project_path: &Path) -> Result<WorkspaceFileDiscover
         let entry = entry?;
 
         if entry.file_type().is_dir() {
+            if entry.path() != project_path {
+                entries.push(DiscoveredWorkspaceEntry {
+                    path: relative_path(project_path, entry.path())?,
+                    kind: "folder",
+                });
+            }
+
             if entry.path() != project_path && entry.path().join(".git").exists() {
                 let repo_root = entry.path().to_path_buf();
                 repo_root_cache.insert(repo_root.clone(), Some(repo_root.clone()));
@@ -394,8 +463,11 @@ fn discover_workspace_files(project_path: &Path) -> Result<WorkspaceFileDiscover
         }
 
         let relative = relative_path(project_path, entry.path())?;
-        actual_paths.insert(relative.clone());
-        file_paths.push(relative);
+        actual_file_paths.insert(relative.clone());
+        entries.push(DiscoveredWorkspaceEntry {
+            path: relative,
+            kind: "file",
+        });
 
         let parent = entry.path().parent().unwrap_or(project_path);
         if let Some(repo_root) =
@@ -406,30 +478,57 @@ fn discover_workspace_files(project_path: &Path) -> Result<WorkspaceFileDiscover
     }
 
     Ok(WorkspaceFileDiscovery {
-        actual_paths,
-        file_paths,
+        actual_file_paths,
+        entries,
         git_repo_roots,
     })
 }
 
-fn build_project_files(
-    file_paths: Vec<String>,
-    actual_paths: &HashSet<String>,
+fn resolve_workspace_file_path(project_path: &Path, relative_path: &str) -> Result<PathBuf> {
+    let relative = Path::new(relative_path);
+
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        })
+    {
+        anyhow::bail!("invalid workspace path: {relative_path}");
+    }
+
+    Ok(project_path.join(relative))
+}
+
+fn build_project_entries(
+    entries: Vec<DiscoveredWorkspaceEntry>,
+    actual_file_paths: &HashSet<String>,
     statuses: &HashMap<String, char>,
     live_files: &HashSet<String>,
 ) -> Vec<ProjectFileEntry> {
     let mut files = Vec::new();
 
-    for relative in file_paths {
-        let git_status = *statuses.get(&relative).unwrap_or(&' ');
-        let live_status = resolve_live_status(live_files, &relative, git_status);
+    for entry in entries {
+        if entry.kind == "folder" {
+            files.push(ProjectFileEntry {
+                path: entry.path.clone(),
+                kind: "folder".to_string(),
+                git_status: ' ',
+                live_status: resolve_live_status(live_files, &entry.path, ' '),
+            });
+            continue;
+        }
 
-        if !should_include_snapshot_file(&relative, git_status, &live_status) {
+        let git_status = *statuses.get(&entry.path).unwrap_or(&' ');
+        let live_status = resolve_live_status(live_files, &entry.path, git_status);
+
+        if !should_include_snapshot_file(&entry.path, git_status, &live_status) {
             continue;
         }
 
         files.push(ProjectFileEntry {
-            path: relative,
+            path: entry.path,
             kind: "file".to_string(),
             git_status,
             live_status,
@@ -438,7 +537,7 @@ fn build_project_files(
 
     for (path, status) in statuses {
         if *status == 'D'
-            && !actual_paths.contains(path)
+            && !actual_file_paths.contains(path)
             && should_include_snapshot_file(
                 path,
                 *status,
@@ -647,6 +746,16 @@ fn relative_path(root: &Path, path: &Path) -> Result<String> {
     Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
+fn normalize_workspace_path(relative_path: &str) -> Result<String> {
+    let relative = Path::new(relative_path);
+
+    if relative.as_os_str().is_empty() {
+        anyhow::bail!("invalid workspace path: {relative_path}");
+    }
+
+    Ok(relative.to_string_lossy().replace('\\', "/").trim_matches('/').to_string())
+}
+
 fn resolve_live_status(
     live_files: &HashSet<String>,
     relative_path: &str,
@@ -727,8 +836,8 @@ mod tests {
     };
 
     use super::{
-        build_file_preview_with_options, collect_files, parse_porcelain_line, parse_unified_diff,
-        scan_project,
+        build_file_preview_with_options, collect_files, create_project_entry,
+        parse_porcelain_line, parse_unified_diff, scan_project, write_text_preview,
     };
     use crate::models::DiffLineKind;
 
@@ -811,7 +920,7 @@ diff --git a/src/lib.rs b/src/lib.rs
             .map(|file| file.path.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(paths, vec!["assets/changed.png", "src/App.tsx"]);
+        assert_eq!(paths, vec!["assets", "assets/changed.png", "src", "src/App.tsx"]);
     }
 
     #[test]
@@ -918,6 +1027,64 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(preview.lines.len(), 3);
         assert_eq!(preview.lines[0].content, "# After");
         assert_eq!(preview.lines[2].content, "Latest note");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writes_text_preview_back_to_disk() {
+        let root = create_temp_project_root();
+        let file_path = root.join("README.md");
+        fs::write(&file_path, "# Before\n").unwrap();
+
+        let preview =
+            write_text_preview(&root, "README.md", &HashSet::new(), "# After\n\n- saved\n")
+                .unwrap();
+        let saved = fs::read_to_string(&file_path).unwrap();
+
+        assert_eq!(saved, "# After\n\n- saved\n");
+        assert!(matches!(preview.mode, crate::models::FilePreviewMode::Text));
+        assert_eq!(preview.lines[0].content, "# After");
+        assert_eq!(preview.lines[2].content, "- saved");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn creates_nested_file_entries_inside_the_workspace() {
+        let root = create_temp_project_root();
+
+        let created =
+            create_project_entry(&root, "src/generated/use-flowterm.ts", "file").unwrap();
+
+        assert_eq!(created, "src/generated/use-flowterm.ts");
+        assert!(root.join("src/generated/use-flowterm.ts").is_file());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_paths_that_escape_the_workspace_root() {
+        let root = create_temp_project_root();
+
+        let error = create_project_entry(&root, "../escape.txt", "file").unwrap_err();
+
+        assert!(error.to_string().contains("invalid workspace path"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_project_keeps_empty_folders_in_the_snapshot() {
+        let root = create_temp_project_root();
+        fs::create_dir_all(root.join("src/snippets")).unwrap();
+        fs::write(root.join("src/App.tsx"), "export {};\n").unwrap();
+
+        let scan = scan_project(&root, &HashSet::new()).unwrap();
+
+        assert!(scan.files.iter().any(|entry| {
+            entry.path == "src/snippets" && entry.kind == "folder"
+        }));
 
         let _ = fs::remove_dir_all(root);
     }
