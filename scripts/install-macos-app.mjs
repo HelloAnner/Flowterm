@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { ensureFrontendDeps } from './ensure-frontend-deps.mjs'
 
 const PNPM_COMMAND = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const CARGO_COMMAND = process.platform === 'win32' ? 'cargo.exe' : 'cargo'
 const DEFAULT_INSTALL_DIR = '/Applications'
 const TAURI_BUILD_ARGS = ['tauri', 'build', '--bundles', 'app']
 
@@ -65,6 +66,32 @@ export const installMacosApp = ({
     installDir,
     fs: fileSystem,
   })
+
+  const frontendDistPath = path.join(cwd, 'dist')
+  const tauriManifestPath = path.join(cwd, 'src-tauri', 'Cargo.toml')
+
+  if (fileSystem.existsSync(frontendDistPath)) {
+    logger.log('Removing previous frontend build output...')
+    fileSystem.rmSync(frontendDistPath, {
+      force: true,
+      recursive: true,
+    })
+  }
+
+  logger.log('Cleaning previous release build artifacts...')
+
+  const cleanResult = runCommand(
+    CARGO_COMMAND,
+    ['clean', '--manifest-path', tauriManifestPath],
+    {
+      cwd,
+      stdio: 'inherit',
+    },
+  )
+
+  if (cleanResult.status !== 0) {
+    throw new Error(`cargo clean failed with status ${cleanResult.status ?? 'unknown'}.`)
+  }
 
   logger.log(`Building ${paths.productName}.app...`)
 

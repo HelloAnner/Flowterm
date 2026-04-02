@@ -69,6 +69,36 @@ const largeDiffPreview: FilePreview = {
   totalLines: 120,
 }
 
+const unifiedDiffPreview: FilePreview = {
+  gitStatus: 'M',
+  imageDataUrl: null,
+  lines: [
+    {
+      content: 'const previous = true',
+      kind: 'removed',
+      newLineNumber: null,
+      oldLineNumber: 8,
+    },
+    {
+      content: 'const next = true',
+      kind: 'added',
+      newLineNumber: 8,
+      oldLineNumber: null,
+    },
+    {
+      content: 'const stable = true',
+      kind: 'context',
+      newLineNumber: 9,
+      oldLineNumber: 9,
+    },
+  ],
+  liveStatus: 'modified',
+  mode: 'diff',
+  path: 'src/lib/dev-runtime.test.ts',
+  startLine: 0,
+  totalLines: 3,
+}
+
 describe('WorkspaceDiffPanel', () => {
   it('keeps the current file path visible in the header', () => {
     render(
@@ -210,6 +240,26 @@ describe('WorkspaceDiffPanel', () => {
     expect(screen.getByText('diff row 72')).toBeInTheDocument()
     expect(screen.queryByText('diff row 73')).not.toBeInTheDocument()
     expect(screen.queryByText('diff row 120')).not.toBeInTheDocument()
+  })
+
+  it('uses a single unified diff gutter with status markers instead of dual line-number columns', () => {
+    render(
+      <WorkspaceDiffPanel
+        isLoading={false}
+        onRequestWindow={vi.fn()}
+        preview={unifiedDiffPreview}
+        selectedFilePath={unifiedDiffPreview.path}
+        syntaxThemeId="flowterm-warm-dark"
+      />,
+    )
+
+    const gutters = screen.getAllByTestId('diff-gutter')
+    expect(gutters).toHaveLength(3)
+    expect(gutters[0]).toHaveTextContent('-8')
+    expect(gutters[1]).toHaveTextContent('+8')
+    expect(gutters[2]).toHaveTextContent('9')
+    expect(screen.queryByTestId('legacy-old-line-number')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('legacy-new-line-number')).not.toBeInTheDocument()
   })
 
   it('hides preview chrome text and keeps only icon signals in the header', () => {

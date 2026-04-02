@@ -15,4 +15,4 @@ build:
 
 start:
 	node ./scripts/ensure-frontend-deps.mjs
-	pnpm start
+	node ./scripts/start-dev.mjs

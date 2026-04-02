@@ -160,11 +160,17 @@ const TerminalPane = memo(function TerminalPane({
     )
     pooledRef.current = pooled
 
-    // Mount + fit + focus — single rAF for layout, then immediate focus
+    // Mount + fit + focus — double-rAF ensures layout is settled before measuring
     viewport.appendChild(pooled.container)
     requestAnimationFrame(() => {
-      pooled.fitAddon.fit()
-      pooled.terminal.focus()
+      requestAnimationFrame(() => {
+        pooled.fitAddon.fit()
+        const dimensions = pooled.fitAddon.proposeDimensions()
+        if (dimensions) {
+          pooled.resizeScheduler({ cols: dimensions.cols, rows: dimensions.rows })
+        }
+        pooled.terminal.focus()
+      })
     })
 
     // Ongoing resize
@@ -187,14 +193,20 @@ const TerminalPane = memo(function TerminalPane({
   useEffect(() => { updatePoolTheme(theme) }, [theme])
   useEffect(() => { updatePoolTypography(typography) }, [typography])
 
-  const handleViewportClick = useCallback(() => {
+  // Re-focus terminal when pane becomes visible again (e.g., switching tabs)
+  useEffect(() => {
+    pooledRef.current?.terminal.focus()
+  })
+
+  // mousedown captures focus before any TUI app (Claude Code, etc.) can intercept
+  const handleViewportMouseDown = useCallback(() => {
     pooledRef.current?.terminal.focus()
   }, [])
 
   return (
     <div
       className="terminal-pane-viewport h-full min-h-0 w-full"
-      onClick={handleViewportClick}
+      onMouseDown={handleViewportMouseDown}
       ref={viewportRef}
     />
   )

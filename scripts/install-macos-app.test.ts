@@ -58,9 +58,10 @@ describe('resolveMacosAppInstallPaths', () => {
 })
 
 describe('installMacosApp', () => {
-  it('builds the app and replaces an existing installation', () => {
+  it('rebuilds an optimized release app and replaces an existing installation', () => {
     const fs = makeFs({
       existingPaths: [
+        '/repo/dist',
         '/repo/src-tauri/target/release/bundle/macos/Flowterm.app',
         '/Applications/Flowterm.app',
       ],
@@ -68,6 +69,7 @@ describe('installMacosApp', () => {
     const ensureFrontendDeps = vi.fn(() => true)
     const spawnSync = vi
       .fn()
+      .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
     const logger = {
@@ -86,21 +88,57 @@ describe('installMacosApp', () => {
     expect(ensureFrontendDeps).toHaveBeenCalledWith({
       cwd: '/repo',
     })
-    expect(spawnSync).toHaveBeenNthCalledWith(1, 'pnpm', ['tauri', 'build', '--bundles', 'app'], {
+    expect(fs.rmSync).toHaveBeenNthCalledWith(1, '/repo/dist', {
+      force: true,
+      recursive: true,
+    })
+    expect(spawnSync).toHaveBeenNthCalledWith(
+      1,
+      'cargo',
+      ['clean', '--manifest-path', '/repo/src-tauri/Cargo.toml'],
+      {
+        cwd: '/repo',
+        stdio: 'inherit',
+      },
+    )
+    expect(spawnSync).toHaveBeenNthCalledWith(2, 'pnpm', ['tauri', 'build', '--bundles', 'app'], {
       cwd: '/repo',
       stdio: 'inherit',
     })
     expect(fs.mkdirSync).toHaveBeenCalledWith('/Applications', { recursive: true })
-    expect(fs.rmSync).toHaveBeenCalledWith('/Applications/Flowterm.app', {
+    expect(fs.rmSync).toHaveBeenNthCalledWith(2, '/Applications/Flowterm.app', {
       force: true,
       recursive: true,
     })
-    expect(spawnSync).toHaveBeenNthCalledWith(2, 'ditto', [
+    expect(spawnSync).toHaveBeenNthCalledWith(3, 'ditto', [
       '/repo/src-tauri/target/release/bundle/macos/Flowterm.app',
       '/Applications/Flowterm.app',
     ], {
       stdio: 'inherit',
     })
+  })
+
+  it('stops before building when release cleanup fails', () => {
+    const fs = makeFs()
+    const ensureFrontendDeps = vi.fn(() => true)
+    const spawnSync = vi.fn().mockReturnValueOnce({ status: 1 })
+
+    expect(() =>
+      installMacosApp({
+        cwd: '/repo',
+        platform: 'darwin',
+        fs,
+        ensureFrontendDeps,
+        spawnSync,
+      }),
+    ).toThrow('cargo clean failed with status 1.')
+
+    expect(spawnSync).toHaveBeenCalledTimes(1)
+    expect(spawnSync).not.toHaveBeenCalledWith(
+      'pnpm',
+      ['tauri', 'build', '--bundles', 'app'],
+      expect.anything(),
+    )
   })
 
   it('fails outside macOS before building', () => {

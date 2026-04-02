@@ -416,7 +416,7 @@ export const CommandPalette = memo(function CommandPalette({
         aria-label="Command Palette"
         className="palette-dialog"
         hideCloseButton
-        overlayClassName="bg-transparent backdrop-blur-0"
+        overlayClassName="palette-overlay"
       >
         <DialogTitle className="sr-only">Command Palette</DialogTitle>
         <div className="palette-input-row">
@@ -468,7 +468,7 @@ export const CommandPalette = memo(function CommandPalette({
                 visibleItems.map((item, index) => renderItem(item, index))
               )
             ) : (
-              <div className="palette-empty">
+              <div className="flex items-center justify-center py-6 text-[12px] text-[var(--text-muted)]">
                 No matching commands
               </div>
             )}

@@ -198,6 +198,19 @@ pub fn create_project_entry(project_path: &Path, relative_path: &str, kind: &str
     Ok(normalized_path)
 }
 
+pub fn delete_project_entry(project_path: &Path, relative_path: &str) -> Result<()> {
+    let absolute_path = resolve_workspace_file_path(project_path, relative_path)?;
+
+    if !absolute_path.exists() {
+        anyhow::bail!("entry does not exist: {relative_path}");
+    }
+
+    trash::delete(&absolute_path)
+        .with_context(|| format!("failed to move to trash: {}", absolute_path.display()))?;
+
+    Ok(())
+}
+
 fn build_untracked_preview(
     project_path: &Path,
     relative_path: &str,
@@ -836,10 +849,45 @@ use crate::models::{
 };
 
 pub fn scan_git_repositories(project_path: &Path) -> Result<Vec<GitRepository>> {
-    let discovery = discover_workspace_files(project_path)?;
+    let repo_roots = discover_git_roots(project_path);
+    build_git_repo_list(project_path, &repo_roots)
+}
+
+/// Lightweight repo discovery — only walks directories looking for `.git`,
+/// skipping file enumeration entirely. Much faster than `discover_workspace_files`.
+fn discover_git_roots(project_path: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if project_path.join(".git").exists() {
+        roots.push(project_path.to_path_buf());
+    }
+
+    for entry in WalkDir::new(project_path)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|e| e.file_type().is_dir() && should_visit(e.path()))
+    {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        if entry.path().join(".git").exists() {
+            roots.push(entry.path().to_path_buf());
+        }
+    }
+
+    roots
+}
+
+/// Build repository metadata from a set of known git roots.
+/// Reused by both initial scan and incremental refresh.
+fn build_git_repo_list(
+    project_path: &Path,
+    repo_roots: &[PathBuf],
+) -> Result<Vec<GitRepository>> {
     let mut repos = Vec::new();
 
-    for repo_root in &discovery.git_repo_roots {
+    for repo_root in repo_roots {
         let name = repo_root
             .file_name()
             .and_then(|n| n.to_str())
@@ -890,6 +938,33 @@ pub fn scan_git_repositories(project_path: &Path) -> Result<Vec<GitRepository>> 
     }
 
     Ok(repos)
+}
+
+/// Incremental refresh: takes already-known repo paths and refreshes only their
+/// git status. Avoids the directory walk entirely.
+pub fn refresh_git_repositories(
+    project_path: &Path,
+    repo_paths: &[String],
+) -> Result<Vec<GitRepository>> {
+    let roots: Vec<PathBuf> = repo_paths.iter().map(PathBuf::from).collect();
+    build_git_repo_list(project_path, &roots)
+}
+
+/// Fetch all known repos from their remotes (safe, read-only operation).
+/// This updates the local remote-tracking refs so that ahead/behind counts
+/// reflect the true state of the remote.
+pub fn git_fetch_repos(repo_paths: &[String]) {
+    for path in repo_paths {
+        let repo_root = PathBuf::from(path);
+        if !repo_root.join(".git").exists() && !repo_root.is_dir() {
+            continue;
+        }
+        // --quiet to suppress output, --all to fetch all remotes
+        let _ = Command::new("git")
+            .args(["fetch", "--quiet", "--all"])
+            .current_dir(&repo_root)
+            .output();
+    }
 }
 
 pub fn git_pull_all(project_path: &Path) -> Result<Vec<GitPullResult>> {

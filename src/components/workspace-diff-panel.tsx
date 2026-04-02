@@ -410,19 +410,16 @@ function VirtualizedPreview({
             preview.mode === 'diff' ? (
               <div
                 className={cn(
-                  'grid h-6 grid-cols-[72px_72px_minmax(0,1fr)]',
+                  'grid h-6 grid-cols-[84px_minmax(0,1fr)]',
                   line.kind === 'added' && 'bg-[var(--diff-added-bg)]',
                   line.kind === 'removed' && 'bg-[var(--diff-removed-bg)]',
                 )}
                 key={`${preview.path}-${index}`}
               >
-                <LineNumberCell
-                  number={line.oldLineNumber}
-                  tone={line.kind === 'removed' ? 'removed' : 'default'}
-                />
-                <LineNumberCell
-                  number={line.newLineNumber}
-                  tone={line.kind === 'added' ? 'added' : 'default'}
+                <DiffGutterCell
+                  kind={line.kind}
+                  newLineNumber={line.newLineNumber}
+                  oldLineNumber={line.oldLineNumber}
                 />
                 {line.kind === 'hunk' ? (
                   <pre className="overflow-x-auto px-4 py-0 text-[var(--accent-glow)]">
@@ -612,6 +609,36 @@ const LineNumberCell = memo(function LineNumberCell({
       )}
     >
       {number ?? ''}
+    </div>
+  )
+})
+
+const DiffGutterCell = memo(function DiffGutterCell({
+  kind,
+  newLineNumber,
+  oldLineNumber,
+}: {
+  kind: FilePreview['lines'][number]['kind']
+  newLineNumber: number | null
+  oldLineNumber: number | null
+}): ReactElement {
+  const marker = kind === 'added' ? '+' : kind === 'removed' ? '-' : ''
+  const number = newLineNumber ?? oldLineNumber
+  const tone = kind === 'added' ? 'added' : kind === 'removed' ? 'removed' : 'default'
+
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-end gap-1.5 px-3 tabular-nums text-right text-[var(--text-muted)]',
+        tone === 'added' && 'bg-[var(--status-added-bg)] text-[var(--text-primary)]',
+        tone === 'removed' && 'bg-[var(--status-removed-bg)] text-[var(--text-primary)]',
+      )}
+      data-testid="diff-gutter"
+    >
+      <span aria-hidden="true" className="inline-block min-w-[0.75rem] text-center">
+        {marker}
+      </span>
+      <span>{number ?? ''}</span>
     </div>
   )
 })

@@ -34,3 +34,5 @@ tauri = { version = "2.10.3", features = [] }
 tauri-plugin-log = "2"
 uuid = { version = "1.18", features = ["serde", "v4"] }
 walkdir = "2.5"
+tauri-plugin-opener = "2.5.3"
+trash = "5.2.3"

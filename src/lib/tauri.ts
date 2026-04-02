@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener'
 
 import type {
   AppBootstrap,
@@ -32,6 +33,13 @@ export function isTauriEnvironment(): boolean {
   return '__TAURI_INTERNALS__' in window
 }
 
+export async function openUrl(url: string): Promise<void> {
+  if (isTauriEnvironment()) {
+    return tauriOpenUrl(url)
+  }
+  window.open(url, '_blank', 'noopener')
+}
+
 export async function bootstrapApp(): Promise<AppBootstrap> {
   return invoke<AppBootstrap>('bootstrap_app')
 }
@@ -55,6 +63,12 @@ export async function activateProject(
   projectId: string,
 ): Promise<ProjectSnapshot> {
   return invoke<ProjectSnapshot>('activate_project', { projectId })
+}
+
+export async function focusProject(
+  projectId: string,
+): Promise<void> {
+  return invoke('focus_project', { projectId })
 }
 
 export async function refreshProjectSnapshot(
@@ -117,6 +131,13 @@ export async function createProjectEntry(
     path,
     projectId,
   })
+}
+
+export async function deleteProjectEntry(
+  projectId: string,
+  path: string,
+): Promise<void> {
+  return invoke('delete_project_entry', { path, projectId })
 }
 
 export async function attachTerminal(
@@ -194,10 +215,23 @@ export async function saveLlmConfig(config: LlmConfig): Promise<void> {
 // Git Operations
 // ---------------------------------------------------------------------------
 
+export async function gitFetchRepos(
+  repoPaths: string[],
+): Promise<void> {
+  return invoke('git_fetch_repos', { repoPaths })
+}
+
 export async function scanGitRepos(
   projectId: string,
 ): Promise<GitRepository[]> {
   return invoke<GitRepository[]>('scan_git_repos', { projectId })
+}
+
+export async function refreshGitRepos(
+  projectId: string,
+  repoPaths: string[],
+): Promise<GitRepository[]> {
+  return invoke<GitRepository[]>('refresh_git_repos', { projectId, repoPaths })
 }
 
 export async function gitPullAllRepos(

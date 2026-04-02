@@ -211,8 +211,8 @@ fn create_session(
 ) -> Result<TerminalSession> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
-        rows: 40,
-        cols: 120,
+        rows: 24,
+        cols: 80,
         pixel_width: 0,
         pixel_height: 0,
     })?;
@@ -451,7 +451,23 @@ fn build_zsh_command(
 
     fs::write(
         &hook_file,
-        "if [ -n \"$FLOWTERM_ORIGINAL_ZDOTDIR\" ] && [ -r \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\" ]; then\n  source \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\"\nelif [ -r \"$HOME/.zshrc\" ]; then\n  source \"$HOME/.zshrc\"\nfi\nfunction __flowterm_emit_cwd() {\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}\nfunction __flowterm_emit_prompt_ready() {\n  printf '\\033]133;PromptReady=1\\a'\n}\nautoload -Uz add-zsh-hook 2>/dev/null\nadd-zsh-hook precmd __flowterm_emit_prompt_ready\nadd-zsh-hook precmd __flowterm_emit_cwd\n__flowterm_emit_prompt_ready\n__flowterm_emit_cwd\n",
+        concat!(
+            "# Source login initialization files for full PATH (e.g. docker, homebrew)\n",
+            "if [ -r /etc/zprofile ]; then\n  source /etc/zprofile\nfi\n",
+            "if [ -n \"$FLOWTERM_ORIGINAL_ZDOTDIR\" ] && [ -r \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zprofile\" ]; then\n",
+            "  source \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zprofile\"\n",
+            "elif [ -r \"$HOME/.zprofile\" ]; then\n  source \"$HOME/.zprofile\"\nfi\n",
+            "# Source interactive config\n",
+            "if [ -n \"$FLOWTERM_ORIGINAL_ZDOTDIR\" ] && [ -r \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\" ]; then\n",
+            "  source \"$FLOWTERM_ORIGINAL_ZDOTDIR/.zshrc\"\n",
+            "elif [ -r \"$HOME/.zshrc\" ]; then\n  source \"$HOME/.zshrc\"\nfi\n",
+            "function __flowterm_emit_cwd() {\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}\n",
+            "function __flowterm_emit_prompt_ready() {\n  printf '\\033]133;PromptReady=1\\a'\n}\n",
+            "autoload -Uz add-zsh-hook 2>/dev/null\n",
+            "add-zsh-hook precmd __flowterm_emit_prompt_ready\n",
+            "add-zsh-hook precmd __flowterm_emit_cwd\n",
+            "__flowterm_emit_prompt_ready\n__flowterm_emit_cwd\n",
+        ),
     )?;
 
     let mut command = CommandBuilder::new(shell);
@@ -482,7 +498,21 @@ fn build_bash_command(
 
     fs::write(
         &hook_file,
-        "if [ -n \"$FLOWTERM_ORIGINAL_BASHRC\" ] && [ -r \"$FLOWTERM_ORIGINAL_BASHRC\" ]; then\n  source \"$FLOWTERM_ORIGINAL_BASHRC\"\nelif [ -r \"$HOME/.bashrc\" ]; then\n  source \"$HOME/.bashrc\"\nfi\n__flowterm_emit_cwd() {\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}\n__flowterm_emit_prompt_ready() {\n  printf '\\033]133;PromptReady=1\\a'\n}\nPROMPT_COMMAND=\"__flowterm_emit_prompt_ready;__flowterm_emit_cwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n__flowterm_emit_prompt_ready\n__flowterm_emit_cwd\n",
+        concat!(
+            "# Source login initialization files for full PATH (e.g. docker, homebrew)\n",
+            "if [ -r /etc/profile ]; then\n  source /etc/profile\nfi\n",
+            "if [ -r \"$HOME/.bash_profile\" ]; then\n  source \"$HOME/.bash_profile\"\n",
+            "elif [ -r \"$HOME/.bash_login\" ]; then\n  source \"$HOME/.bash_login\"\n",
+            "elif [ -r \"$HOME/.profile\" ]; then\n  source \"$HOME/.profile\"\nfi\n",
+            "# Source interactive config\n",
+            "if [ -n \"$FLOWTERM_ORIGINAL_BASHRC\" ] && [ -r \"$FLOWTERM_ORIGINAL_BASHRC\" ]; then\n",
+            "  source \"$FLOWTERM_ORIGINAL_BASHRC\"\n",
+            "elif [ -r \"$HOME/.bashrc\" ]; then\n  source \"$HOME/.bashrc\"\nfi\n",
+            "__flowterm_emit_cwd() {\n  printf '\\033]133;CurrentDir=%s\\a' \"$PWD\"\n}\n",
+            "__flowterm_emit_prompt_ready() {\n  printf '\\033]133;PromptReady=1\\a'\n}\n",
+            "PROMPT_COMMAND=\"__flowterm_emit_prompt_ready;__flowterm_emit_cwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n",
+            "__flowterm_emit_prompt_ready\n__flowterm_emit_cwd\n",
+        ),
     )?;
 
     let mut command = CommandBuilder::new(shell);

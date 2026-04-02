@@ -323,4 +323,69 @@ describe('App', () => {
       }),
     ).toBeInTheDocument()
   })
+
+  it('returns to the default workspace tab view when a project tab is clicked from settings', async () => {
+    const user = userEvent.setup()
+
+    useWorkspaceStore.setState({
+      activeProjectId: 'project-a',
+      bootstrap: vi.fn().mockResolvedValue(undefined),
+      isBooting: false,
+      projects: [
+        {
+          changedFileCount: 1,
+          hasLiveActivity: true,
+          id: 'project-a',
+          name: 'Flowterm',
+          path: '/tmp/flowterm',
+          terminalState: 'running',
+          untrackedFileCount: 0,
+        },
+        {
+          changedFileCount: 0,
+          hasLiveActivity: false,
+          id: 'project-b',
+          name: 'Paperclip',
+          path: '/tmp/paperclip',
+          terminalState: 'idle',
+          untrackedFileCount: 0,
+        },
+      ],
+      selectProject: vi.fn().mockImplementation(async (projectId: string) => {
+        useWorkspaceStore.setState({ activeProjectId: projectId })
+      }),
+      snapshot: {
+        backend: 'xterm',
+        files: [
+          {
+            gitStatus: 'M',
+            kind: 'file',
+            liveStatus: 'modified',
+            path: 'src/App.tsx',
+          },
+        ],
+        project: {
+          changedFileCount: 1,
+          hasLiveActivity: true,
+          id: 'project-a',
+          name: 'Flowterm',
+          path: '/tmp/flowterm',
+          terminalState: 'running',
+          untrackedFileCount: 0,
+        },
+      },
+    })
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('heading', { name: '外观' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: /flowterm/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: '外观' })).not.toBeInTheDocument()
+      expect(screen.getByText('Explorer')).toBeInTheDocument()
+    })
+  })
 })

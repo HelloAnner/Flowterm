@@ -30351,6 +30351,41 @@
                               "fontFamily": "Inter",
                               "fontSize": 11,
                               "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "d3aeY",
+                              "name": "behind-badge",
+                              "fill": "#7BA7C820",
+                              "cornerRadius": 9999,
+                              "gap": 3,
+                              "padding": [
+                                1,
+                                5
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "AnJoq",
+                                  "name": "behindIco1",
+                                  "width": 8,
+                                  "height": 8,
+                                  "iconFontName": "arrow-down",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#7BA7C8"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "UaFJh",
+                                  "name": "behindTxt1",
+                                  "fill": "#7BA7C8",
+                                  "content": "3",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 9,
+                                  "fontWeight": "600"
+                                }
+                              ]
                             }
                           ]
                         }
@@ -30437,6 +30472,41 @@
                               "fontFamily": "Inter",
                               "fontSize": 11,
                               "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "v77Gm",
+                              "name": "behind-badge",
+                              "fill": "#7BA7C820",
+                              "cornerRadius": 9999,
+                              "gap": 3,
+                              "padding": [
+                                1,
+                                5
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "aOT5n",
+                                  "name": "behindIco2",
+                                  "width": 8,
+                                  "height": 8,
+                                  "iconFontName": "arrow-down",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#7BA7C8"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "WP7JE",
+                                  "name": "behindTxt2",
+                                  "fill": "#7BA7C8",
+                                  "content": "1",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 9,
+                                  "fontWeight": "600"
+                                }
+                              ]
                             }
                           ]
                         }
@@ -31140,6 +31210,215 @@
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "KsPhq",
+                          "name": "Git Actions",
+                          "gap": 4,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "F4JcH",
+                              "name": "Pull Btn",
+                              "fill": "#1E1E1E",
+                              "cornerRadius": 4,
+                              "stroke": {
+                                "align": "outside",
+                                "thickness": 1,
+                                "fill": "#2A2A2A"
+                              },
+                              "gap": 4,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "8QhIc",
+                                  "name": "pullIco",
+                                  "width": 10,
+                                  "height": 10,
+                                  "iconFontName": "arrow-down",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#7A9E8A"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "6NJcB",
+                                  "name": "pullTxt",
+                                  "fill": "#8A8680",
+                                  "content": "Pull",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "dsGFX",
+                              "name": "Commit Btn",
+                              "fill": "#1E1E1E",
+                              "cornerRadius": 4,
+                              "stroke": {
+                                "align": "outside",
+                                "thickness": 1,
+                                "fill": "#C8A96E40"
+                              },
+                              "gap": 4,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "kZPuM",
+                                  "name": "commitIco",
+                                  "width": 10,
+                                  "height": 10,
+                                  "iconFontName": "sparkles",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#C8A96E"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "WapKL",
+                                  "name": "commitTxt",
+                                  "fill": "#C8A96E",
+                                  "content": "Commit",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "iTDat",
+                              "name": "Push Btn",
+                              "fill": "#1E1E1E",
+                              "cornerRadius": 4,
+                              "stroke": {
+                                "align": "outside",
+                                "thickness": 1,
+                                "fill": "#2A2A2A"
+                              },
+                              "gap": 4,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "ABAjT",
+                                  "name": "pushIco",
+                                  "width": 10,
+                                  "height": 10,
+                                  "iconFontName": "arrow-up",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#7A9E8A"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "zgJCn",
+                                  "name": "pushTxt",
+                                  "fill": "#8A8680",
+                                  "content": "Push",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "vDAAn",
+                              "name": "Stash Btn",
+                              "fill": "#1E1E1E",
+                              "cornerRadius": 4,
+                              "stroke": {
+                                "align": "outside",
+                                "thickness": 1,
+                                "fill": "#2A2A2A"
+                              },
+                              "gap": 4,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "NtovZ",
+                                  "name": "stashIco",
+                                  "width": 10,
+                                  "height": 10,
+                                  "iconFontName": "archive",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#555250"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "dbNbT",
+                                  "name": "stashTxt",
+                                  "fill": "#555250",
+                                  "content": "Stash",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ByvdD",
+                              "name": "Pop Btn",
+                              "fill": "#1E1E1E",
+                              "cornerRadius": 4,
+                              "stroke": {
+                                "align": "outside",
+                                "thickness": 1,
+                                "fill": "#2A2A2A"
+                              },
+                              "gap": 4,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "DWdi9",
+                                  "name": "popIco",
+                                  "width": 10,
+                                  "height": 10,
+                                  "iconFontName": "archive-restore",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#555250"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Y9ElQ",
+                                  "name": "popTxt",
+                                  "fill": "#555250",
+                                  "content": "Pop",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 10,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
                         },
                         {
                           "type": "frame",

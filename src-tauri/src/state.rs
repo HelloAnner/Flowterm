@@ -282,6 +282,9 @@ impl ProjectRegistry {
 
     pub fn set_active_project(&mut self, project_id: &str) -> Result<()> {
         self.active_project_id = Some(project_id.to_string());
+        if let Some(project) = self.find_project(project_id) {
+            self.touch_recent_project(&project.name, &project.path)?;
+        }
         self.persist_active_project()
     }
 
@@ -679,7 +682,7 @@ fn open_connection(path: &PathBuf) -> Result<Connection> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs};
+    use std::{collections::HashMap, fs, time::Duration};
 
     use anyhow::Result;
 
@@ -789,6 +792,40 @@ mod tests {
         assert_eq!(registry.active_project_id(), Some("project-legacy".into()));
         assert_eq!(registry.projects().len(), 1);
         assert!(app_data_dir.join("flowterm.sqlite3").exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn touching_active_project_updates_recent_project_order() -> Result<()> {
+        let app_data_dir = unique_test_dir("recent-projects");
+        let flowterm_dir = app_data_dir.join("Flowterm");
+        let notes_dir = app_data_dir.join("Notes");
+        fs::create_dir_all(&flowterm_dir)?;
+        fs::create_dir_all(&notes_dir)?;
+
+        let mut registry = ProjectRegistry::load_from_dir(app_data_dir)?;
+        registry.add_project(
+            flowterm_dir.to_string_lossy().to_string(),
+            Some("Flowterm".into()),
+        )?;
+        let flowterm_id = registry.active_project_id().unwrap();
+        registry.add_project(
+            notes_dir.to_string_lossy().to_string(),
+            Some("Notes".into()),
+        )?;
+        let notes_id = registry.active_project_id().unwrap();
+
+        std::thread::sleep(Duration::from_millis(1100));
+        registry.set_active_project(&flowterm_id)?;
+
+        let refreshed_recent = registry.list_recent_projects()?;
+        assert_eq!(
+            refreshed_recent.first().map(|project| project.name.as_str()),
+            Some("Flowterm")
+        );
+        assert_eq!(registry.active_project_id(), Some(flowterm_id.clone()));
+        assert_ne!(flowterm_id, notes_id);
 
         Ok(())
     }

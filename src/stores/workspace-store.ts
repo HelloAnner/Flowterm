@@ -21,6 +21,8 @@ import {
   bootstrapApp,
   closeTerminal as closeTerminalCommand,
   createProjectEntry as createProjectEntryCommand,
+  deleteProjectEntry as deleteProjectEntryCommand,
+  focusProject,
   isTauriEnvironment,
   listRecentProjects as listRecentProjectsCommand,
   listTerminals,
@@ -115,6 +117,7 @@ interface WorkspaceState {
     path: string,
     kind: ProjectEntryKind,
   ) => Promise<void>
+  deleteProjectEntry: (projectId: string, path: string) => Promise<void>
   fetchFilePreview: (
     projectId?: string | null,
     path?: string | null,
@@ -421,6 +424,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '创建文件树条目失败' })
       throw error
+    }
+  },
+  deleteProjectEntry: async (projectId, path) => {
+    try {
+      await deleteProjectEntryCommand(projectId, path)
+
+      set((state) => {
+        const isSelectedDeleted = state.selectedFilePath === path
+          || (state.selectedFilePath?.startsWith(`${path}/`) ?? false)
+
+        return {
+          error: null,
+          ...(isSelectedDeleted ? {
+            filePreview: null,
+            isFilePreviewLoading: false,
+            selectedFilePath: null,
+          } : {}),
+        }
+      })
+      await get().refreshActiveProject(projectId, { changedPaths: [path] })
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : '删除失败' })
     }
   },
   fetchFilePreview: async (projectId, path, options) => {
@@ -850,8 +875,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
         void persistProjectWorkspace(projectId, get)
 
-        void activateProject(projectId)
-          .then((snapshot) => {
+        void focusProject(projectId)
+          .then(() => {
             const after = get()
 
             if (
@@ -861,32 +886,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
               return
             }
 
-            const selectedFilePath = resolveSnapshotSelection(
-              snapshot,
-              cachedWorkspaceState.selectedFilePath,
+            if (!cachedSelectedFilePath) {
+              return
+            }
+
+            const freshPreview = getCachedFilePreview(
+              after.filePreviewByCacheKey,
+              projectId,
+              cachedSelectedFilePath,
             )
 
-            set((s) => {
-              const freshPreview = getCachedFilePreview(
-                s.filePreviewByCacheKey,
-                projectId,
-                selectedFilePath,
-              )
+            if (!freshPreview) {
+              void get().fetchFilePreview(projectId, cachedSelectedFilePath)
+            }
 
-              return {
-                filePreview: freshPreview,
-                isFilePreviewLoading: Boolean(selectedFilePath && !freshPreview),
-                projects: replaceProjectSummary(s.projects, snapshot.project),
-                selectedFilePath,
-                snapshot,
-                snapshotByProject: {
-                  ...s.snapshotByProject,
-                  [projectId]: snapshot,
-                },
-              }
-            })
-
-            void get().fetchFilePreview(projectId, selectedFilePath)
+            void get().refreshRecentProjects()
           })
           .catch(() => {})
       }, PROJECT_ACTIVATION_SETTLE_MS)
@@ -963,6 +977,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       })
       void persistProjectWorkspace(projectId, get)
       void get().fetchFilePreview(projectId, selectedFilePath)
+      void get().refreshRecentProjects()
     } catch (error) {
       const currentState = get()
 

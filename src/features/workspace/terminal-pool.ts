@@ -1,5 +1,8 @@
 import { Terminal } from '@xterm/xterm'
+import { CanvasAddon } from '@xterm/addon-canvas'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 
 import { createTerminalResizeScheduler } from './terminal-resize'
@@ -7,8 +10,10 @@ import {
   claimTerminalHistory,
   subscribeTerminalOutput,
 } from './terminal-stream'
+import { openUrl } from '../../lib/tauri'
 
 const MAX_POOL_SIZE = 10
+const SCROLLBACK_LINES = 10_000
 const FONT_FAMILY =
   '"Berkeley Mono", "Geist Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", ui-monospace, monospace'
 
@@ -86,6 +91,7 @@ export function acquireTerminal(
   container.style.height = '100%'
 
   const terminal = new Terminal({
+    allowProposedApi: true,
     allowTransparency: false,
     cursorBlink: true,
     cursorStyle: 'bar',
@@ -96,6 +102,7 @@ export function acquireTerminal(
     fontWeightBold: '600',
     letterSpacing: typography.letterSpacing,
     lineHeight: typography.lineHeight,
+    scrollback: SCROLLBACK_LINES,
     theme: {
       background: theme.background,
       foreground: theme.foreground,
@@ -110,15 +117,34 @@ export function acquireTerminal(
     void resizeTerminal(sessionId, dimensions.cols, dimensions.rows)
   })
 
+  // Unicode 11 — proper CJK and emoji width calculation
+  const unicodeAddon = new Unicode11Addon()
+  terminal.loadAddon(unicodeAddon)
+  terminal.unicode.activeVersion = '11'
+
+  // Clickable links — Cmd+Click (macOS) / Ctrl+Click opens in default browser
+  terminal.loadAddon(new WebLinksAddon((_event, uri) => {
+    void openUrl(uri)
+  }))
+
   terminal.loadAddon(fitAddon)
   terminal.open(container)
 
+  // GPU renderer: try WebGL first, then Canvas, then DOM fallback
   try {
     const webglAddon = new WebglAddon()
-    webglAddon.onContextLoss(() => webglAddon.dispose())
+    webglAddon.onContextLoss(() => {
+      webglAddon.dispose()
+      // Fallback to Canvas on context loss
+      try { terminal.loadAddon(new CanvasAddon()) } catch { /* DOM fallback */ }
+    })
     terminal.loadAddon(webglAddon)
   } catch {
-    // WebGL unavailable — DOM renderer fallback
+    try {
+      terminal.loadAddon(new CanvasAddon())
+    } catch {
+      // DOM renderer fallback
+    }
   }
 
   terminal.onData((data) => {

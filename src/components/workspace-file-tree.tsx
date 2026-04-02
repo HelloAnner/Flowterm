@@ -57,6 +57,7 @@ interface WorkspaceFileTreeProps {
   expandedPaths: Record<string, boolean>
   files: ProjectFileEntry[]
   onCreateEntry: (path: string, kind: ProjectEntryKind) => Promise<void>
+  onDeleteEntry: (path: string) => Promise<void>
   onToggleFolder: (path: string, expanded: boolean) => void
   onSelectFile: (path: string) => void
   selectedFilePath: string | null
@@ -66,6 +67,7 @@ export const WorkspaceFileTree = memo(function WorkspaceFileTree({
   expandedPaths,
   files,
   onCreateEntry,
+  onDeleteEntry,
   onToggleFolder,
   onSelectFile,
   selectedFilePath,
@@ -136,7 +138,7 @@ export const WorkspaceFileTree = memo(function WorkspaceFileTree({
     if (target instanceof HTMLElement && target.closest('[data-tree-row]')) return
 
     event.preventDefault()
-    setContextMenu({ parentPath: null, x: event.clientX, y: event.clientY })
+    setContextMenu({ nodePath: null, parentPath: null, x: event.clientX, y: event.clientY })
   }
 
   return (
@@ -190,7 +192,7 @@ export const WorkspaceFileTree = memo(function WorkspaceFileTree({
                 node={row.node}
                 onOpenContextMenu={(menuEvent, node) => {
                   menuEvent.preventDefault()
-                  setContextMenu({ parentPath: resolveCreateParentPath(node), x: menuEvent.clientX, y: menuEvent.clientY })
+                  setContextMenu({ nodePath: node.path, parentPath: resolveCreateParentPath(node), x: menuEvent.clientX, y: menuEvent.clientY })
                 }}
                 onSelectFile={onSelectFile}
                 onToggleFolder={onToggleFolder}
@@ -217,6 +219,20 @@ export const WorkspaceFileTree = memo(function WorkspaceFileTree({
         >
           <ContextMenuItem label="New File" onClick={() => startCreate('file', contextMenu.parentPath)} />
           <ContextMenuItem label="New Folder" onClick={() => startCreate('folder', contextMenu.parentPath)} />
+          {contextMenu.nodePath ? (
+            <>
+              <div className="tree-context-menu__separator" />
+              <ContextMenuItem
+                label="Delete"
+                destructive
+                onClick={() => {
+                  const targetPath = contextMenu.nodePath!
+                  setContextMenu(null)
+                  void onDeleteEntry(targetPath)
+                }}
+              />
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -357,6 +373,7 @@ interface PendingCreateState {
 }
 
 interface ContextMenuState {
+  nodePath: string | null
   parentPath: string | null
   x: number
   y: number
@@ -422,15 +439,17 @@ function DraftTreeRow({
 // ---------------------------------------------------------------------------
 
 function ContextMenuItem({
+  destructive,
   label,
   onClick,
 }: {
+  destructive?: boolean
   label: string
   onClick: () => void
 }): ReactElement {
   return (
     <button
-      className="tree-context-menu__item"
+      className={cn('tree-context-menu__item', destructive && 'tree-context-menu__item--destructive')}
       onClick={onClick}
       role="menuitem"
       type="button"

@@ -142,6 +142,15 @@ function App(): ReactElement {
     (projectId: string) => { void selectProject(projectId) },
     [selectProject],
   )
+  const handleSelectProjectFromTabs = useCallback(
+    (projectId: string) => {
+      setWorkspaceSidebarView((currentView) =>
+        currentView === 'settings' ? 'tree' : currentView,
+      )
+      void selectProject(projectId)
+    },
+    [selectProject],
+  )
   const handleSplitTerminal = useCallback(() => {
     if (activeProjectId) { void addTerminalPane(activeProjectId) }
   }, [activeProjectId, addTerminalPane])
@@ -201,6 +210,7 @@ function App(): ReactElement {
   useEffect(() => {
     const scheduled = scheduleIdleTask(() => {
       void import('./components/workspace-diff-panel')
+      void import('./components/workspace-git-panel')
       void import('./components/workspace-terminal')
     })
 
@@ -415,7 +425,7 @@ function App(): ReactElement {
           onOpenRecentProject={handleOpenRecentProject}
           onRemoveProject={handleRemoveProject}
           onReorderProjects={reorderProjects}
-          onSelectProject={handleSelectProject}
+          onSelectProject={handleSelectProjectFromTabs}
           projects={projects}
           recentProjects={recentProjects}
         />
@@ -480,8 +490,8 @@ function App(): ReactElement {
                 selectedView={workspaceSidebarView}
               />
               <div className="flex-1 min-w-0">
-                <Suspense fallback={<PanelFallback message="正在加载 Git 操作..." />}>
-                  <WorkspaceGitPanel activeProjectId={activeProjectId} />
+                <Suspense fallback={<div className="h-full bg-[var(--bg-base)]" />}>
+                  <WorkspaceGitPanel activeProjectId={activeProjectId} syntaxThemeId={activeTheme.id} />
                 </Suspense>
               </div>
             </div>
@@ -673,6 +683,7 @@ function WorkspaceTreePane({
       EMPTY_EXPANDED_PATHS,
   )
   const createProjectEntry = useWorkspaceStore((s) => s.createProjectEntry)
+  const deleteProjectEntry = useWorkspaceStore((s) => s.deleteProjectEntry)
   const selectFile = useWorkspaceStore((s) => s.selectFile)
   const setTreePathExpanded = useWorkspaceStore((s) => s.setTreePathExpanded)
   const handleCreateEntry = useCallback(
@@ -684,6 +695,16 @@ function WorkspaceTreePane({
       await createProjectEntry(activeProjectId, path, kind)
     },
     [activeProjectId, createProjectEntry],
+  )
+  const handleDeleteEntry = useCallback(
+    async (path: string) => {
+      if (!activeProjectId) {
+        return
+      }
+
+      await deleteProjectEntry(activeProjectId, path)
+    },
+    [activeProjectId, deleteProjectEntry],
   )
   const handleSelectFile = useCallback(
     (path: string) => {
@@ -705,6 +726,7 @@ function WorkspaceTreePane({
       expandedPaths={expandedPaths}
       files={files}
       onCreateEntry={handleCreateEntry}
+      onDeleteEntry={handleDeleteEntry}
       onSelectFile={handleSelectFile}
       onToggleFolder={handleToggleFolder}
       selectedFilePath={selectedFilePath}

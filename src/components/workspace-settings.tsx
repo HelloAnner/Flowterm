@@ -10,6 +10,7 @@ import { type ReactElement, type ReactNode, useCallback, useEffect, useMemo, use
 
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { useSidebarResize } from '../features/workspace/sidebar-resize'
 import { listThemes } from '../features/theme/theme-registry'
 import { summarizeProjectSnapshot } from '../features/workspace/tree'
 import type { TerminalTypography } from '../features/workspace/terminal-preferences'
@@ -93,6 +94,12 @@ export function WorkspaceSettings({
   selectedSection,
   terminalTypography,
 }: WorkspaceSettingsProps): ReactElement {
+  const sidebar = useSidebarResize({
+    storageKey: 'settings-sidebar',
+    defaultWidth: 220,
+    minWidth: 160,
+    maxWidth: 360,
+  })
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) ?? null,
     [activeProjectId, projects],
@@ -110,7 +117,10 @@ export function WorkspaceSettings({
   return (
     <div className="flex h-full min-h-0 bg-[var(--bg-base)]">
       {/* Navigation sidebar */}
-      <nav className="flex w-[220px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+      <nav
+        className="flex shrink-0 flex-col bg-[var(--bg-elevated)]"
+        style={{ width: sidebar.width }}
+      >
         <div className="flex h-11 items-center px-4">
           <span className="font-semibold text-[var(--text-primary)]">Settings</span>
         </div>
@@ -139,6 +149,15 @@ export function WorkspaceSettings({
           })}
         </div>
       </nav>
+
+      {/* Resize handle */}
+      <div
+        className={cn(
+          'sidebar-resize-handle',
+          sidebar.isDragging && 'sidebar-resize-handle--active',
+        )}
+        onMouseDown={sidebar.onResizeStart}
+      />
 
       {/* Content — full-width scrollable column */}
       <div className="flex-1 overflow-y-auto">

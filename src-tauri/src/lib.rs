@@ -96,6 +96,26 @@ fn activate_project(
 }
 
 #[tauri::command]
+fn focus_project(
+    app: AppHandle,
+    state: State<FlowtermState>,
+    project_id: String,
+) -> Result<(), String> {
+    with_error_handling(|| {
+        let project = {
+            let mut registry = state.registry.lock().unwrap();
+            registry.set_active_project(&project_id)?;
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        ensure_active_watch(&app, &state, &project.id, &project.path)?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
 fn refresh_project_snapshot(
     state: State<FlowtermState>,
     project_id: String,
@@ -181,6 +201,24 @@ fn create_project_entry(
         };
 
         git::create_project_entry(&PathBuf::from(project.path), &path, &kind)
+    })
+}
+
+#[tauri::command]
+fn delete_project_entry(
+    state: State<FlowtermState>,
+    project_id: String,
+    path: String,
+) -> Result<(), String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::delete_project_entry(&PathBuf::from(project.path), &path)
     })
 }
 
@@ -366,6 +404,29 @@ fn scan_git_repos(
 }
 
 #[tauri::command]
+fn refresh_git_repos(
+    state: State<FlowtermState>,
+    project_id: String,
+    repo_paths: Vec<String>,
+) -> Result<Vec<GitRepository>, String> {
+    with_error_handling(|| {
+        let project = {
+            let registry = state.registry.lock().unwrap();
+            registry
+                .find_project(&project_id)
+                .context("project not found")?
+        };
+
+        git::refresh_git_repositories(&PathBuf::from(project.path), &repo_paths)
+    })
+}
+
+#[tauri::command]
+fn git_fetch_repos(repo_paths: Vec<String>) {
+    git::git_fetch_repos(&repo_paths);
+}
+
+#[tauri::command]
 fn git_pull_all_repos(
     state: State<FlowtermState>,
     project_id: String,
@@ -538,6 +599,9 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_dialog::init())
                 .context("failed to initialize dialog plugin")?;
+            app.handle()
+                .plugin(tauri_plugin_opener::init())
+                .context("failed to initialize opener plugin")?;
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -557,8 +621,11 @@ pub fn run() {
             close_terminal,
             complete_performance_probe,
             create_project_entry,
+            delete_project_entry,
+            focus_project,
             git_ai_commit_repo,
             git_auto_commit_repo,
+            git_fetch_repos,
             git_pull_all_repos,
             git_push_repo,
             git_resolve_conflicts_repo,
@@ -570,6 +637,7 @@ pub fn run() {
             read_llm_config,
             read_performance_probe_state,
             read_project_workspace,
+            refresh_git_repos,
             refresh_project_snapshot,
             remove_project,
             resize_terminal,
